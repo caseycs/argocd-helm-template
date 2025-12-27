@@ -31,22 +31,29 @@ def load_application_yaml(path: Path = Path("application.yaml")) -> dict:
         return yaml.safe_load(f)
 
 
-def extract_chart_info(app_yaml: dict) -> tuple[str, str, str]:
+def extract_chart_info(app_yaml: dict) -> tuple[str, str, str, bool]:
     """
-    Extract chart repository, name, and version from application.yaml.
+    Extract chart repository, name, version, and chart type from application.yaml.
 
     Returns:
-        tuple: (repo_url, chart_name, version)
+        tuple: (repo_url, chart_name, version, is_git_chart)
     """
     sources = app_yaml.get("spec", {}).get("sources", [])
 
-    # Find the source with chart info (not the git repo)
+    # Find the source with chart info (helm chart or git-based chart)
     for source in sources:
         if "chart" in source:
+            # Traditional Helm chart repository
             repo_url = source.get("repoURL", "")
             chart_name = source.get("chart", "")
             version = source.get("targetRevision", "").lstrip("v")
-            return repo_url, chart_name, version
+            return repo_url, chart_name, version, False
+        elif "path" in source:
+            # Git-based chart
+            repo_url = source.get("repoURL", "")
+            chart_path = source.get("path", "")
+            version = source.get("targetRevision", "")
+            return repo_url, chart_path, version, True
 
     raise ValueError("Could not find chart information in application.yaml")
 
@@ -77,6 +84,65 @@ def get_repo_name_from_url(repo_url: str) -> str:
     repo_name = repo_name.rstrip("-")
 
     return repo_name
+
+
+def get_git_cache_dir(repo_url: str) -> Path:
+    """Get the cache directory path for a Git repository."""
+    cache_root = Path.home() / ".argocd_template"
+    repo_name = get_repo_name_from_url(repo_url)
+    return cache_root / repo_name
+
+
+def clone_or_update_git_repo(repo_url: str, verbose: bool = False) -> Path:
+    """
+    Clone a Git repository in the cache directory if it doesn't exist.
+
+    Returns:
+        Path to the cached repository
+    """
+    cache_dir = get_git_cache_dir(repo_url)
+
+    if not cache_dir.exists():
+        # Clone new repo
+        log(f"Cloning repository from {repo_url} to {cache_dir}...", verbose)
+        cache_dir.parent.mkdir(parents=True, exist_ok=True)
+        cmd = ["git", "clone", repo_url, str(cache_dir)]
+        log(f"Running: {' '.join(cmd)}", verbose)
+        subprocess.run(cmd, check=True, capture_output=True)
+    else:
+        log(f"Using cached repository at {cache_dir}", verbose)
+
+    return cache_dir
+
+
+def checkout_git_revision(repo_path: Path, revision: str, verbose: bool = False):
+    """
+    Checkout a specific revision (branch/tag) in a Git repository.
+
+    If the revision is not available locally, fetches from origin and retries.
+    """
+    log(f"Checking out {revision} in {repo_path}...", verbose)
+    cmd = ["git", "-C", str(repo_path), "checkout", revision]
+    log(f"Running: {' '.join(cmd)}", verbose)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        # Revision not found locally, try fetching and retrying
+        log(f"Revision {revision} not found locally, fetching from origin...", verbose)
+        fetch_cmd = ["git", "-C", str(repo_path), "fetch", "origin"]
+        log(f"Running: {' '.join(fetch_cmd)}", verbose)
+        fetch_result = subprocess.run(fetch_cmd, capture_output=True, text=True)
+
+        if fetch_result.returncode != 0:
+            raise RuntimeError(f"Failed to fetch from origin: {fetch_result.stderr}")
+
+        # Retry checkout after fetch
+        log(f"Retrying checkout of {revision} after fetch...", verbose)
+        log(f"Running: {' '.join(cmd)}", verbose)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to checkout {revision} even after fetch: {result.stderr}")
 
 
 def is_repo_added(repo_name: str, verbose: bool = False) -> bool:
@@ -123,14 +189,21 @@ def ensure_repo_added(repo_name: str, repo_url: str, verbose: bool = False):
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def should_download_chart(chart_dir: Path, chart_name: str, version: str) -> bool:
+def should_download_chart(chart_dir: Path, chart_name: str, version: str, is_git: bool = False) -> bool:
     """
     Check if chart needs to be downloaded.
 
     Returns True if:
     - Chart directory doesn't exist
-    - Chart.yaml version doesn't match expected version
+    - Chart.yaml version doesn't match expected version (for Helm charts only)
+
+    For Git charts, always returns True to force re-copy on each run
+    (Git checkout will be a no-op if revision is already checked out)
     """
+    if is_git:
+        # For Git charts, always return True to ensure we re-copy from latest checkout
+        return True
+
     chart_path = chart_dir / chart_name
     chart_yaml = chart_path / "Chart.yaml"
 
@@ -142,6 +215,32 @@ def should_download_chart(chart_dir: Path, chart_name: str, version: str) -> boo
         chart_metadata = yaml.safe_load(f)
         current_version = chart_metadata.get("version", "").lstrip("v")
         return current_version != version
+
+
+def _copy_git_chart(repo_path: Path, chart_path: str, chart_dir: Path, verbose: bool = False):
+    """Copy a chart from a Git repository to the chart directory."""
+    # Remove entire .chart directory to ensure clean state
+    if chart_dir.exists():
+        log(f"Removing existing .chart directory at {chart_dir}", verbose)
+        shutil.rmtree(chart_dir)
+
+    # Create fresh .chart directory
+    chart_dir.mkdir(parents=True, exist_ok=True)
+
+    # Source path in the Git repo
+    source_chart_path = repo_path / chart_path
+
+    if not source_chart_path.exists():
+        raise FileNotFoundError(f"Chart not found at {source_chart_path}")
+
+    # Get the chart directory name (last component of the path)
+    chart_dir_name = source_chart_path.name
+
+    # Destination in the .chart directory
+    dest_chart_path = chart_dir / chart_dir_name
+
+    log(f"Copying chart from {source_chart_path} to {dest_chart_path}", verbose)
+    shutil.copytree(source_chart_path, dest_chart_path)
 
 
 def _download_chart_impl(repo_url: str, chart_name: str, version: str, chart_dir: Path, is_oci: bool = False, verbose: bool = False):
@@ -176,28 +275,35 @@ def _download_chart_impl(repo_url: str, chart_name: str, version: str, chart_dir
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def download_chart(repo_url: str, chart_name: str, version: str, chart_dir: Path, verbose: bool = False):
+def download_chart(repo_url: str, chart_name: str, version: str, chart_dir: Path, is_git: bool = False, verbose: bool = False):
     """Wrapper that checks if download is needed and downloads chart."""
-    if not should_download_chart(chart_dir, chart_name, version):
+    if not should_download_chart(chart_dir, chart_name, version, is_git):
         log(f"Chart {chart_name}:{version} already exists in {chart_dir}", verbose)
         return
 
-    # Determine if OCI registry
-    is_oci = is_oci_registry(repo_url)
-
-    # Ensure repo is added for non-OCI registries
-    if not is_oci:
-        repo_name = get_repo_name_from_url(repo_url)
-        ensure_repo_added(repo_name, repo_url, verbose)
-
-    # Determine chart reference based on registry type
-    if is_oci:
-        chart_ref = repo_url
+    if is_git:
+        # Handle Git-based chart
+        log(f"Downloading chart {chart_name} from Git revision {version}...", verbose)
+        repo_path = clone_or_update_git_repo(repo_url, verbose)
+        checkout_git_revision(repo_path, version, verbose)
+        _copy_git_chart(repo_path, chart_name, chart_dir, verbose)
     else:
-        chart_ref = get_repo_name_from_url(repo_url)
+        # Handle Helm registry chart (traditional or OCI)
+        is_oci = is_oci_registry(repo_url)
 
-    log(f"Downloading chart {chart_name}:{version}...", verbose)
-    _download_chart_impl(chart_ref, chart_name, version, chart_dir, is_oci, verbose)
+        # Ensure repo is added for non-OCI registries
+        if not is_oci:
+            repo_name = get_repo_name_from_url(repo_url)
+            ensure_repo_added(repo_name, repo_url, verbose)
+
+        # Determine chart reference based on registry type
+        if is_oci:
+            chart_ref = repo_url
+        else:
+            chart_ref = get_repo_name_from_url(repo_url)
+
+        log(f"Downloading chart {chart_name}:{version}...", verbose)
+        _download_chart_impl(chart_ref, chart_name, version, chart_dir, is_oci, verbose)
 
 
 class LiteralString(str):
@@ -376,16 +482,20 @@ def main():
     app_yaml = load_application_yaml(application_yaml_path)
 
     # Extract chart info
-    repo_url, chart_name, version = extract_chart_info(app_yaml)
+    repo_url, chart_name, version, is_git_chart = extract_chart_info(app_yaml)
     log(f"Chart: {chart_name}", verbose)
     log(f"Repository: {repo_url}", verbose)
     log(f"Version: {version}", verbose)
+    log(f"Chart type: {'Git' if is_git_chart else 'Helm'}", verbose)
 
     # Download chart if needed
-    download_chart(repo_url, chart_name, version, chart_dir, verbose)
+    download_chart(repo_url, chart_name, version, chart_dir, is_git_chart, verbose)
 
     # Run helm template
-    chart_path = chart_dir / chart_name
+    # For Git charts, chart_name is a path (e.g., "charts/argo-cd"), so get the last component
+    # For Helm charts, chart_name is just the chart name
+    actual_chart_dir_name = Path(chart_name).name if is_git_chart else chart_name
+    chart_path = chart_dir / actual_chart_dir_name
     log("Running helm template...", verbose)
     run_helm_template(chart_path, version, extra_args, values_file, output_dir, secrets, verbose)
 

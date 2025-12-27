@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter-nodepool-default.cluster-scoped.common
+  namespace: argo-events
+  annotations:
+    argo-events.argoproj.io/sync-wave: "-40"
+spec:
+  project: default
+  destination:
+    name: common
+  sources:
+    - repoURL: https://github.com/argoproj/argo-helm
+      path: charts/argo-events
+      targetRevision: argo-events-2.4.19
+      helm:
+        releaseName: argo-events
+        valueFiles:
+          - $values/tests/chart-git/values.yaml
+    - repoURL: "https://bitbucket.org/org/argocd-repo.git"
+      targetRevision: main
+      ref: values
+  syncPolicy: {}
+    # automated:
+    #   prune: true

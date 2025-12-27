@@ -33,14 +33,15 @@ def test_https_chart_download_flow(tmp_path):
     assert app_yaml.get("kind") == "Application"
 
     # Step 2: Extract chart info
-    repo_url, chart_name, version = extract_chart_info(app_yaml)
+    repo_url, chart_name, version, is_git = extract_chart_info(app_yaml)
     assert repo_url == "https://argoproj.github.io/argo-helm"
     assert chart_name == "argo-cd"
     assert version == "7.9.1"
+    assert is_git is False
 
     # Step 3: Download chart (using temp directory for .chart)
     chart_dir = tmp_path / ".chart"
-    download_chart(repo_url, chart_name, version, chart_dir, verbose=True)
+    download_chart(repo_url, chart_name, version, chart_dir, is_git, verbose=True)
 
     # Verify chart directory was created
     assert chart_dir.exists(), f"Chart directory {chart_dir} was not created"
