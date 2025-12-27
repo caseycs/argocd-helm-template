@@ -7,7 +7,7 @@
 
 """
 Extract chart info from application.yaml, download chart, and run helm template.
-Usage: uv run argocd_helm_template.py [--workdir DIR] [--verbose] [--secrets] [additional helm template args]
+Usage: uv run argocd_helm_template.py [--workdir DIR] [--verbose] [--secrets] [--diff] [additional helm template args]
 """
 
 import argparse
@@ -275,6 +275,72 @@ def _download_chart_impl(repo_url: str, chart_name: str, version: str, chart_dir
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def check_git_repo(workdir: Path, verbose: bool = False) -> bool:
+    """Check if the working directory is part of a git repository."""
+    cmd = ["git", "-C", str(workdir), "rev-parse", "--git-dir"]
+    log(f"Running: {' '.join(cmd)}", verbose)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True
+    )
+    return result.returncode == 0
+
+
+def check_file_changes(workdir: Path, files: list[str], verbose: bool = False) -> bool:
+    """
+    Check if any of the given files have uncommitted changes.
+
+    Returns True if any file has changes (both staged and unstaged).
+    """
+    cmd = ["git", "-C", str(workdir), "diff", "--name-only"] + files
+    log(f"Running: {' '.join(cmd)}", verbose)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+        return False
+
+    # Also check for staged changes
+    staged_cmd = ["git", "-C", str(workdir), "diff", "--cached", "--name-only"] + files
+    log(f"Running: {' '.join(staged_cmd)}", verbose)
+    staged_result = subprocess.run(
+        staged_cmd,
+        capture_output=True,
+        text=True
+    )
+
+    # Return True if either unstaged or staged changes exist
+    return bool(result.stdout.strip() or (staged_result.returncode == 0 and staged_result.stdout.strip()))
+
+
+def extract_git_file(workdir: Path, filepath: str, dest: Path, git_ref: str = "HEAD", verbose: bool = False):
+    """
+    Extract a file from a git reference and write to destination.
+
+    Raises an exception if the file doesn't exist in git or if git command fails.
+    """
+    cmd = ["git", "-C", str(workdir), "show", f"{git_ref}:./{filepath}"]
+    log(f"Running: {' '.join(cmd)}", verbose)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to extract {filepath} from git: {result.stderr}")
+
+    # Ensure parent directory exists
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(dest, "w") as f:
+        f.write(result.stdout)
+
+
 def download_chart(repo_url: str, chart_name: str, version: str, chart_dir: Path, workdir: Path, is_git: bool = False, verbose: bool = False):
     """Wrapper that checks if download is needed and downloads chart."""
     if not should_download_chart(chart_dir, chart_name, version, is_git):
@@ -391,7 +457,7 @@ def process_secrets(yaml_output: str, secrets: bool = False, verbose: bool = Fal
     return '---\n' + '\n---\n'.join(result_parts)
 
 
-def run_helm_template(chart_path: Path, version: str, extra_args: list[str], values_file: Path = Path("values.yaml"), output_dir: Path = Path("."), secrets: bool = False, verbose: bool = False):
+def run_helm_template(chart_path: Path, version: str, extra_args: list[str], values_file: Path = Path("values.yaml"), output_dir: Path = Path("."), secrets: bool = False, verbose: bool = False, print_output: bool = True):
     """Run helm template command and optionally post-process Secrets to decode base64 values."""
     cmd = [
         "helm", "template",
@@ -427,10 +493,135 @@ def run_helm_template(chart_path: Path, version: str, extra_args: list[str], val
     manifest_filename = ".manifest.secrets.yaml" if secrets else ".manifest.yaml"
     manifest_path = output_dir / manifest_filename
 
-    # Write processed output to both stdout and manifest file
-    print(processed_output, end="")
+    # Write processed output to manifest file
     with open(manifest_path, "w") as manifest_file:
         manifest_file.write(processed_output)
+
+    # Print to stdout only if print_output is True
+    if print_output:
+        print(processed_output, end="")
+
+
+def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path, values_file: Path, output_dir: Path, extra_args: list[str], secrets: bool = False, verbose: bool = False, print_output: bool = True):
+    """
+    Load application.yaml, extract chart info, download chart, and render manifests.
+
+    Args:
+        workdir: Working directory
+        chart_dir: Directory to download/store charts
+        application_yaml_path: Path to application.yaml
+        values_file: Path to values.yaml
+        output_dir: Directory to write manifests to
+        extra_args: Additional helm template arguments
+        secrets: Whether to decode base64 in Secrets
+        verbose: Enable verbose logging
+        print_output: Whether to print output to stdout
+    """
+    log(f"Loading {application_yaml_path}...", verbose)
+    app_yaml = load_application_yaml(application_yaml_path)
+
+    # Extract chart info
+    repo_url, chart_name, version, is_git_chart = extract_chart_info(app_yaml)
+    log(f"Chart: {chart_name}", verbose)
+    log(f"Repository: {repo_url}", verbose)
+    log(f"Version: {version}", verbose)
+    log(f"Chart type: {'Git' if is_git_chart else 'Helm'}", verbose)
+
+    # Download chart if needed
+    download_chart(repo_url, chart_name, version, chart_dir, workdir, is_git_chart, verbose)
+
+    # Run helm template
+    # For Git charts, chart_name is a path (e.g., "charts/argo-cd"), so get the last component
+    # For Helm charts, chart_name is just the chart name
+    actual_chart_dir_name = Path(chart_name).name if is_git_chart else chart_name
+    chart_path = chart_dir / actual_chart_dir_name
+    log("Running helm template...", verbose)
+    run_helm_template(chart_path, version, extra_args, values_file, output_dir, secrets, verbose, print_output)
+
+    manifest_file = ".manifest.secrets.yaml" if secrets else ".manifest.yaml"
+    log(f"Output written to {output_dir / manifest_file}", verbose)
+
+
+def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[str], secrets: bool = False, verbose: bool = False):
+    """
+    Generate manifests from both git-committed and current state of application.yaml and values.yaml.
+
+    Args:
+        workdir: Working directory
+        chart_dir: Directory for charts
+        diff_ref: Git reference to diff against (default: HEAD, can be origin/main, --cached, etc.)
+        extra_args: Additional helm template arguments
+        secrets: Whether to decode base64 in Secrets
+        verbose: Enable verbose logging
+    """
+    # 1. Check if git repo
+    if not check_git_repo(workdir, verbose):
+        print("Error: Working directory is not part of a git repository", file=sys.stderr)
+        sys.exit(1)
+
+    log("Verified workdir is in a git repository", verbose)
+
+    # 2. Check for changes
+    files_to_check = ["application.yaml", "values.yaml"]
+    if not check_file_changes(workdir, files_to_check, verbose):
+        print("Error: No changes detected in application.yaml or values.yaml", file=sys.stderr)
+        sys.exit(1)
+
+    log("Detected changes in application.yaml or values.yaml", verbose)
+
+    # 3. Create .diff directory
+    diff_dir = workdir / ".diff"
+    if diff_dir.exists():
+        log(f"Removing existing .diff directory at {diff_dir}", verbose)
+        shutil.rmtree(diff_dir)
+    diff_dir.mkdir(parents=True, exist_ok=True)
+    log(f"Created .diff directory at {diff_dir}", verbose)
+
+    # 4. Extract original files from git
+    for filename in files_to_check:
+        try:
+            log(f"Extracting {filename} from git {diff_ref}...", verbose)
+            extract_git_file(workdir, filename, diff_dir / filename, diff_ref, verbose)
+        except Exception as e:
+            print(f"Error: Could not extract {filename} from git: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    log("Successfully extracted files from git", verbose)
+
+    # 5. Render original manifests (from .diff/)
+    log("Rendering manifests from original (committed) files...", verbose)
+    render_manifests(
+        workdir=workdir,
+        chart_dir=chart_dir,
+        application_yaml_path=diff_dir / "application.yaml",
+        values_file=diff_dir / "values.yaml",
+        output_dir=diff_dir,
+        extra_args=extra_args,
+        secrets=secrets,
+        verbose=verbose,
+        print_output=False
+    )
+
+    # 6. Render current manifests (to ./)
+    log("Rendering manifests from current files...", verbose)
+    render_manifests(
+        workdir=workdir,
+        chart_dir=chart_dir,
+        application_yaml_path=workdir / "application.yaml",
+        values_file=workdir / "values.yaml",
+        output_dir=workdir,
+        extra_args=extra_args,
+        secrets=secrets,
+        verbose=verbose,
+        print_output=False
+    )
+
+    log(f"Diff complete (comparing against {diff_ref}). Showing diff...", verbose)
+
+    # Execute git diff in interactive mode to show differences
+    diff_cmd = ["git", "diff", "--no-index", "--", str(diff_dir / ".manifest.yaml"), str(workdir / ".manifest.yaml")]
+    log(f"Running: {' '.join(diff_cmd)}", verbose)
+    subprocess.run(diff_cmd)
 
 
 def main():
@@ -460,6 +651,14 @@ def main():
         action="store_true",
         help="Decode base64 values in Secret resources and write to .manifest.secrets.yaml (disabled by default)"
     )
+    parser.add_argument(
+        "--diff",
+        type=str,
+        default=None,
+        const="HEAD",
+        nargs="?",
+        help="Generate diff between current and specified git ref (default: HEAD, hint: origin/main or --cached)"
+    )
 
     # Parse known args, keeping unknown ones for helm template
     args, extra_args = parser.parse_known_args()
@@ -469,38 +668,34 @@ def main():
 
     # Resolve paths
     workdir = Path(args.workdir).resolve() if args.workdir else Path.cwd()
-    application_yaml_path = workdir / "application.yaml"
-    values_file = workdir / "values.yaml"
     chart_dir = Path(args.chart_dir).resolve() if args.chart_dir else workdir / ".chart"
-    output_dir = workdir
 
     log(f"Working directory: {workdir}", verbose)
+
+    # Mode dispatcher - handle --diff mode early
+    if args.diff is not None:
+        diff_mode(workdir, chart_dir, args.diff, extra_args, secrets, verbose)
+        return
+
+    # Normal mode - continue with standard template generation
+    application_yaml_path = workdir / "application.yaml"
+    values_file = workdir / "values.yaml"
+    output_dir = workdir
+
     log(f"Application YAML: {application_yaml_path}", verbose)
 
-    # Parse application.yaml
-    log("Loading application.yaml...", verbose)
-    app_yaml = load_application_yaml(application_yaml_path)
-
-    # Extract chart info
-    repo_url, chart_name, version, is_git_chart = extract_chart_info(app_yaml)
-    log(f"Chart: {chart_name}", verbose)
-    log(f"Repository: {repo_url}", verbose)
-    log(f"Version: {version}", verbose)
-    log(f"Chart type: {'Git' if is_git_chart else 'Helm'}", verbose)
-
-    # Download chart if needed
-    download_chart(repo_url, chart_name, version, chart_dir, workdir, is_git_chart, verbose)
-
-    # Run helm template
-    # For Git charts, chart_name is a path (e.g., "charts/argo-cd"), so get the last component
-    # For Helm charts, chart_name is just the chart name
-    actual_chart_dir_name = Path(chart_name).name if is_git_chart else chart_name
-    chart_path = chart_dir / actual_chart_dir_name
-    log("Running helm template...", verbose)
-    run_helm_template(chart_path, version, extra_args, values_file, output_dir, secrets, verbose)
-
-    manifest_file = ".manifest.secrets.yaml" if secrets else ".manifest.yaml"
-    log(f"Output written to {output_dir / manifest_file}", verbose)
+    # Render manifests using common function
+    render_manifests(
+        workdir=workdir,
+        chart_dir=chart_dir,
+        application_yaml_path=application_yaml_path,
+        values_file=values_file,
+        output_dir=output_dir,
+        extra_args=extra_args,
+        secrets=secrets,
+        verbose=verbose,
+        print_output=True
+    )
 
 
 if __name__ == "__main__":
