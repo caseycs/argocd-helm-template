@@ -217,8 +217,8 @@ def should_download_chart(chart_dir: Path, chart_name: str, version: str, is_git
         return current_version != version
 
 
-def _copy_git_chart(repo_path: Path, chart_path: str, chart_dir: Path, verbose: bool = False):
-    """Copy a chart from a Git repository to the chart directory."""
+def _symlink_git_chart(repo_path: Path, chart_path: str, chart_dir: Path, verbose: bool = False):
+    """Create a symlink from the chart directory to the Git repository chart."""
     # Remove entire .chart directory to ensure clean state
     if chart_dir.exists():
         log(f"Removing existing .chart directory at {chart_dir}", verbose)
@@ -236,11 +236,11 @@ def _copy_git_chart(repo_path: Path, chart_path: str, chart_dir: Path, verbose: 
     # Get the chart directory name (last component of the path)
     chart_dir_name = source_chart_path.name
 
-    # Destination in the .chart directory
+    # Destination symlink path in the .chart directory
     dest_chart_path = chart_dir / chart_dir_name
 
-    log(f"Copying chart from {source_chart_path} to {dest_chart_path}", verbose)
-    shutil.copytree(source_chart_path, dest_chart_path)
+    log(f"Creating symlink from {dest_chart_path} to {source_chart_path}", verbose)
+    dest_chart_path.symlink_to(source_chart_path)
 
 
 def _download_chart_impl(repo_url: str, chart_name: str, version: str, chart_dir: Path, is_oci: bool = False, verbose: bool = False):
@@ -286,7 +286,7 @@ def download_chart(repo_url: str, chart_name: str, version: str, chart_dir: Path
         log(f"Downloading chart {chart_name} from Git revision {version}...", verbose)
         repo_path = clone_or_update_git_repo(repo_url, workdir, verbose)
         checkout_git_revision(repo_path, version, verbose)
-        _copy_git_chart(repo_path, chart_name, chart_dir, verbose)
+        _symlink_git_chart(repo_path, chart_name, chart_dir, verbose)
     else:
         # Handle Helm registry chart (traditional or OCI)
         is_oci = is_oci_registry(repo_url)
