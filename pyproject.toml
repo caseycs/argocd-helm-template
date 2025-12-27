@@ -1,0 +1,12 @@
+[project]
+name = "argocd-helm-template"
+version = "0.1.0"
+description = "Extract chart info from application.yaml, download chart, and run helm template"
+dependencies = [
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
