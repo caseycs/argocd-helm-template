@@ -44,7 +44,7 @@ The application supports three types of Helm chart sources:
 
 3. **Git Repository**
    - Uses `path` field in application.yaml
-   - Charts cached in `~/.argocd_template/{repo-name}`
+   - Charts cached in `.chart_repo/{repo-name}` within the working directory
    - Git repo cloned once, reused on subsequent runs
    - `git fetch` only runs if revision checkout fails (lazy fetch)
    - Specific revision checked out via `git checkout`

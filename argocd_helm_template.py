@@ -86,21 +86,21 @@ def get_repo_name_from_url(repo_url: str) -> str:
     return repo_name
 
 
-def get_git_cache_dir(repo_url: str) -> Path:
-    """Get the cache directory path for a Git repository."""
-    cache_root = Path.home() / ".argocd_template"
+def get_git_cache_dir(repo_url: str, workdir: Path) -> Path:
+    """Get the cache directory path for a Git repository in .chart_repo within the working directory."""
+    cache_root = workdir / ".chart_repo"
     repo_name = get_repo_name_from_url(repo_url)
     return cache_root / repo_name
 
 
-def clone_or_update_git_repo(repo_url: str, verbose: bool = False) -> Path:
+def clone_or_update_git_repo(repo_url: str, workdir: Path, verbose: bool = False) -> Path:
     """
     Clone a Git repository in the cache directory if it doesn't exist.
 
     Returns:
         Path to the cached repository
     """
-    cache_dir = get_git_cache_dir(repo_url)
+    cache_dir = get_git_cache_dir(repo_url, workdir)
 
     if not cache_dir.exists():
         # Clone new repo
@@ -275,7 +275,7 @@ def _download_chart_impl(repo_url: str, chart_name: str, version: str, chart_dir
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def download_chart(repo_url: str, chart_name: str, version: str, chart_dir: Path, is_git: bool = False, verbose: bool = False):
+def download_chart(repo_url: str, chart_name: str, version: str, chart_dir: Path, workdir: Path, is_git: bool = False, verbose: bool = False):
     """Wrapper that checks if download is needed and downloads chart."""
     if not should_download_chart(chart_dir, chart_name, version, is_git):
         log(f"Chart {chart_name}:{version} already exists in {chart_dir}", verbose)
@@ -284,7 +284,7 @@ def download_chart(repo_url: str, chart_name: str, version: str, chart_dir: Path
     if is_git:
         # Handle Git-based chart
         log(f"Downloading chart {chart_name} from Git revision {version}...", verbose)
-        repo_path = clone_or_update_git_repo(repo_url, verbose)
+        repo_path = clone_or_update_git_repo(repo_url, workdir, verbose)
         checkout_git_revision(repo_path, version, verbose)
         _copy_git_chart(repo_path, chart_name, chart_dir, verbose)
     else:
@@ -489,7 +489,7 @@ def main():
     log(f"Chart type: {'Git' if is_git_chart else 'Helm'}", verbose)
 
     # Download chart if needed
-    download_chart(repo_url, chart_name, version, chart_dir, is_git_chart, verbose)
+    download_chart(repo_url, chart_name, version, chart_dir, workdir, is_git_chart, verbose)
 
     # Run helm template
     # For Git charts, chart_name is a path (e.g., "charts/argo-cd"), so get the last component

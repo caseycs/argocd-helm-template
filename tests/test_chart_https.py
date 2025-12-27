@@ -41,7 +41,7 @@ def test_https_chart_download_flow(tmp_path):
 
     # Step 3: Download chart (using temp directory for .chart)
     chart_dir = tmp_path / ".chart"
-    download_chart(repo_url, chart_name, version, chart_dir, is_git, verbose=True)
+    download_chart(repo_url, chart_name, version, chart_dir, tmp_path, is_git, verbose=True)
 
     # Verify chart directory was created
     assert chart_dir.exists(), f"Chart directory {chart_dir} was not created"
