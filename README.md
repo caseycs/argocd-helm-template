@@ -63,7 +63,8 @@ uv run argocd_helm_template.py [OPTIONS] [additional helm template args]
 
 ### Common Options
 
-- `--workdir DIR` - Working directory containing `application.yaml` and `values.yaml` (default: current directory)
+- `--workdir DIR` - Working directory containing application file and `values.yaml` (default: current directory)
+- `--application FILE` - Application YAML filename (default: `application.yaml`)
 - `--chart-dir DIR` - Directory to download charts to (default: `<workdir>/.chart`)
 - `--verbose` - Enable verbose output, shows all git and helm commands
 - `--secrets` - Decode base64 values in Secret resources and write to `.manifest.secrets.yaml`
@@ -110,6 +111,12 @@ uv run argocd_helm_template.py --diff --secrets
 #### Render manifests from specific workdir
 ```bash
 uv run argocd_helm_template.py --workdir ./deployments/staging
+```
+
+#### Use custom application filename
+```bash
+uv run argocd_helm_template.py --application my-application.yaml
+uv run argocd_helm_template.py --diff --application production.yaml
 ```
 
 ## How It Works

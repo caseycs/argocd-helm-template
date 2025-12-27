@@ -571,14 +571,15 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
     log(f"Output written to {output_dir / manifest_file}", verbose)
 
 
-def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[str], secrets: bool = False, verbose: bool = False, diff_sort: bool = False):
+def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, application_file: str, extra_args: list[str], secrets: bool = False, verbose: bool = False, diff_sort: bool = False):
     """
-    Generate manifests from both git-committed and current state of application.yaml and values.yaml.
+    Generate manifests from both git-committed and current state of application file and values.yaml.
 
     Args:
         workdir: Working directory
         chart_dir: Directory for charts
         diff_ref: Git reference to diff against (default: HEAD, can be origin/main, --cached, etc.)
+        application_file: Application YAML filename
         extra_args: Additional helm template arguments
         secrets: Whether to decode base64 in Secrets
         verbose: Enable verbose logging
@@ -592,12 +593,12 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[st
     log("Verified workdir is in a git repository", verbose)
 
     # 2. Check for changes
-    files_to_check = ["application.yaml", "values.yaml"]
+    files_to_check = [application_file, "values.yaml"]
     if not check_file_changes(workdir, files_to_check, verbose):
-        print("Error: No changes detected in application.yaml or values.yaml", file=sys.stderr)
+        print(f"Error: No changes detected in {application_file} or values.yaml", file=sys.stderr)
         sys.exit(1)
 
-    log("Detected changes in application.yaml or values.yaml", verbose)
+    log(f"Detected changes in {application_file} or values.yaml", verbose)
 
     # 3. Create .diff directory
     diff_dir = workdir / ".diff"
@@ -623,7 +624,7 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[st
     render_manifests(
         workdir=workdir,
         chart_dir=chart_dir,
-        application_yaml_path=diff_dir / "application.yaml",
+        application_yaml_path=diff_dir / application_file,
         values_file=diff_dir / "values.yaml",
         output_dir=diff_dir,
         extra_args=extra_args,
@@ -637,7 +638,7 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[st
     render_manifests(
         workdir=workdir,
         chart_dir=chart_dir,
-        application_yaml_path=workdir / "application.yaml",
+        application_yaml_path=workdir / application_file,
         values_file=workdir / "values.yaml",
         output_dir=workdir,
         extra_args=extra_args,
@@ -670,7 +671,13 @@ def main():
     parser.add_argument(
         "--workdir",
         type=str,
-        help="Working directory containing application.yaml (default: current directory)"
+        help="Working directory containing application file and values.yaml (default: current directory)"
+    )
+    parser.add_argument(
+        "--application",
+        type=str,
+        default="application.yaml",
+        help="Application YAML filename (default: application.yaml)"
     )
     parser.add_argument(
         "--chart-dir",
@@ -715,11 +722,11 @@ def main():
 
     # Mode dispatcher - handle --diff mode early
     if args.diff is not None:
-        diff_mode(workdir, chart_dir, args.diff, extra_args, secrets, verbose, args.diff_sort)
+        diff_mode(workdir, chart_dir, args.diff, args.application, extra_args, secrets, verbose, args.diff_sort)
         return
 
     # Normal mode - continue with standard template generation
-    application_yaml_path = workdir / "application.yaml"
+    application_yaml_path = workdir / args.application
     values_file = workdir / "values.yaml"
     output_dir = workdir
 
