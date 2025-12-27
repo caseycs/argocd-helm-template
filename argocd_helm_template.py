@@ -502,6 +502,35 @@ def run_helm_template(chart_path: Path, version: str, extra_args: list[str], val
         print(processed_output, end="")
 
 
+def sort_yaml_file(file_path: Path, verbose: bool = False):
+    """
+    Sort YAML file keys alphabetically.
+
+    Args:
+        file_path: Path to YAML file to sort
+        verbose: Enable verbose logging
+    """
+    log(f"Sorting {file_path}...", verbose)
+
+    # Load all YAML documents
+    with open(file_path) as f:
+        docs = list(yaml.safe_load_all(f))
+
+    # Write back with sorted keys
+    with open(file_path, "w") as f:
+        for i, doc in enumerate(docs):
+            if i > 0:
+                f.write("---\n")
+            yaml.dump(
+                doc,
+                f,
+                default_flow_style=False,
+                sort_keys=True,
+                allow_unicode=True,
+                width=float("inf")
+            )
+
+
 def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path, values_file: Path, output_dir: Path, extra_args: list[str], secrets: bool = False, verbose: bool = False, print_output: bool = True):
     """
     Load application.yaml, extract chart info, download chart, and render manifests.
@@ -542,7 +571,7 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
     log(f"Output written to {output_dir / manifest_file}", verbose)
 
 
-def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[str], secrets: bool = False, verbose: bool = False):
+def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[str], secrets: bool = False, verbose: bool = False, diff_sort: bool = False):
     """
     Generate manifests from both git-committed and current state of application.yaml and values.yaml.
 
@@ -553,6 +582,7 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[st
         extra_args: Additional helm template arguments
         secrets: Whether to decode base64 in Secrets
         verbose: Enable verbose logging
+        diff_sort: Sort YAML keys alphabetically before showing diff
     """
     # 1. Check if git repo
     if not check_git_repo(workdir, verbose):
@@ -616,6 +646,12 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[st
         print_output=False
     )
 
+    # Sort manifests if requested
+    if diff_sort:
+        log("Sorting YAML keys in manifest files before diff...", verbose)
+        sort_yaml_file(diff_dir / ".manifest.yaml", verbose)
+        sort_yaml_file(workdir / ".manifest.yaml", verbose)
+
     log(f"Diff complete (comparing against {diff_ref}). Showing diff...", verbose)
 
     # Execute git diff in interactive mode to show differences
@@ -659,6 +695,11 @@ def main():
         nargs="?",
         help="Generate diff between current and specified git ref (default: HEAD, hint: origin/main or --cached)"
     )
+    parser.add_argument(
+        "--diff-sort",
+        action="store_true",
+        help="Sort YAML keys alphabetically before showing diff"
+    )
 
     # Parse known args, keeping unknown ones for helm template
     args, extra_args = parser.parse_known_args()
@@ -674,7 +715,7 @@ def main():
 
     # Mode dispatcher - handle --diff mode early
     if args.diff is not None:
-        diff_mode(workdir, chart_dir, args.diff, extra_args, secrets, verbose)
+        diff_mode(workdir, chart_dir, args.diff, extra_args, secrets, verbose, args.diff_sort)
         return
 
     # Normal mode - continue with standard template generation
