@@ -2,6 +2,8 @@
 
 A command-line tool to extract chart information from ArgoCD `application.yaml`, download Helm charts, and render Kubernetes manifests using `helm template`. Includes manifest diffing capabilities to compare changes between git references.
 
+**Version 0.1.0** - Built with Click framework for an improved CLI experience.
+
 ## When This Tool is Useful
 
 ### Use Case 1: Preview Manifest Changes Before Committing
@@ -9,7 +11,7 @@ Compare how your Kubernetes manifests will change when updating `application.yam
 
 ```bash
 # See what would change in your manifests
-uv run argocd_helm_template.py --diff --verbose
+uv run argocd_helm_template.py diff --verbose
 ```
 
 This generates two manifest files:
@@ -23,7 +25,7 @@ Review how manifests differ between your current branch and production:
 
 ```bash
 # Compare current changes against origin/main
-uv run argocd_helm_template.py --diff origin/main
+uv run argocd_helm_template.py diff origin/main
 ```
 
 Useful for:
@@ -36,7 +38,7 @@ Sort YAML keys alphabetically to reduce noise in diffs caused by inconsistent fo
 
 ```bash
 # Show diff with sorted YAML keys (more readable)
-uv run argocd_helm_template.py --diff --diff-sort
+uv run argocd_helm_template.py diff --sort
 ```
 
 Useful for:
@@ -49,67 +51,111 @@ Render final Kubernetes manifests to apply to a cluster:
 
 ```bash
 # Generate manifests to stdout
-uv run argocd_helm_template.py
+uv run argocd_helm_template.py render
 
 # Apply directly to cluster
-uv run argocd_helm_template.py | kubectl apply -f -
+uv run argocd_helm_template.py render | kubectl apply -f -
 ```
 
 ## Usage
 
+The tool provides two main commands: `render` and `diff`.
+
 ```bash
-uv run argocd_helm_template.py [OPTIONS] [additional helm template args]
+# Render manifests
+uv run argocd_helm_template.py render [OPTIONS] [additional helm template args]
+
+# Compare manifests
+uv run argocd_helm_template.py diff [REF] [OPTIONS] [additional helm template args]
 ```
 
-### Common Options
+### Common Options (available for both commands)
 
-- `--workdir DIR` - Working directory containing `application.yaml` and `values.yaml` (default: current directory)
+- `--workdir DIR` - Working directory containing application file and `values.yaml` (default: current directory)
+- `--application FILE` - Application YAML filename (default: `application.yaml`)
 - `--chart-dir DIR` - Directory to download charts to (default: `<workdir>/.chart`)
 - `--verbose` - Enable verbose output, shows all git and helm commands
 - `--secrets` - Decode base64 values in Secret resources and write to `.manifest.secrets.yaml`
 
-### Diff Mode Options
+### Render Command
 
-- `--diff [REF]` - Compare manifests between current state and a git reference
-  - Default: `HEAD` (latest commit)
-  - Examples: `origin/main`, `--cached` (staged changes), `v1.0.0`
+Renders Kubernetes manifests from your `application.yaml` and `values.yaml`.
+
+```bash
+uv run argocd_helm_template.py render [OPTIONS] [additional helm template args]
+```
+
+### Diff Command
+
+Compares manifests between your current state and a git reference.
+
+```bash
+uv run argocd_helm_template.py diff [REF] [OPTIONS] [additional helm template args]
+```
+
+- `REF` - Git reference to compare against (default: `HEAD`)
+  - Examples: `HEAD`, `origin/main`, `--cached` (staged changes), `v1.0.0`
   - Shows interactive diff after rendering both versions
 
-- `--diff-sort` - Sort YAML keys alphabetically in manifests before diff
+- `--sort` - Sort YAML keys alphabetically in manifests before diff
   - Reduces noise from key reordering
   - Makes diffs more readable
-  - Only applies when used with `--diff`
 
 ### Examples
 
-#### Generate manifests (normal mode)
+#### Generate manifests (render command)
 ```bash
-uv run argocd_helm_template.py
+uv run argocd_helm_template.py render
+```
+
+#### Render with verbose output
+```bash
+uv run argocd_helm_template.py render --verbose
+```
+
+#### Render with decoded secrets
+```bash
+uv run argocd_helm_template.py render --secrets
 ```
 
 #### Preview changes with verbose output
 ```bash
-uv run argocd_helm_template.py --diff --verbose
+uv run argocd_helm_template.py diff --verbose
 ```
 
 #### Compare against main branch with sorted output
 ```bash
-uv run argocd_helm_template.py --diff origin/main --diff-sort
+uv run argocd_helm_template.py diff origin/main --sort
 ```
 
-#### Show staged changes only
+#### Show staged changes only (with sort)
 ```bash
-uv run argocd_helm_template.py --diff --cached --diff-sort
+uv run argocd_helm_template.py diff --cached --sort
 ```
 
 #### Decode secrets and show diff
 ```bash
-uv run argocd_helm_template.py --diff --secrets
+uv run argocd_helm_template.py diff --secrets
 ```
 
 #### Render manifests from specific workdir
 ```bash
-uv run argocd_helm_template.py --workdir ./deployments/staging
+uv run argocd_helm_template.py render --workdir ./deployments/staging
+```
+
+#### Use custom application filename
+```bash
+uv run argocd_helm_template.py render --application my-application.yaml
+uv run argocd_helm_template.py diff --application production.yaml
+```
+
+#### Pass extra helm template arguments
+```bash
+# Render with namespace override
+uv run argocd_helm_template.py render --namespace myapp
+
+# Diff with custom helm values
+uv run argocd_helm_template.py diff origin/main --set image.tag=v1.2.3
 ```
 
 ## How It Works

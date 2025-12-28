@@ -2,21 +2,24 @@
 # /// script
 # dependencies = [
 #   "pyyaml",
+#   "click>=8.0",
 # ]
 # ///
 
 """
-Extract chart info from application.yaml, download chart, and run helm template.
-Usage: uv run argocd_helm_template.py [--workdir DIR] [--verbose] [--secrets] [--diff] [additional helm template args]
+ArgoCD Helm Template - Render Helm charts from ArgoCD applications.
+Supports both regular rendering and git-aware diffing of manifests.
 """
 
-import argparse
 import base64
 import subprocess
 import sys
 from pathlib import Path
 import yaml
 import shutil
+import click
+
+__version__ = "0.1.0"
 
 
 def log(message: str, verbose: bool = False):
@@ -56,6 +59,23 @@ def extract_chart_info(app_yaml: dict) -> tuple[str, str, str, bool]:
             return repo_url, chart_path, version, True
 
     raise ValueError("Could not find chart information in application.yaml")
+
+
+def extract_helm_config(app_yaml: dict) -> dict:
+    """
+    Extract helm configuration from application.yaml sources section.
+
+    Returns:
+        dict: Helm configuration (e.g., {releaseName: "custom-name", skipCrds: True})
+    """
+    sources = app_yaml.get("spec", {}).get("sources", [])
+
+    # Find the source with helm config
+    for source in sources:
+        if "helm" in source:
+            return source.get("helm", {})
+
+    return {}
 
 
 def is_oci_registry(repo_url: str) -> bool:
@@ -457,14 +477,35 @@ def process_secrets(yaml_output: str, secrets: bool = False, verbose: bool = Fal
     return '---\n' + '\n---\n'.join(result_parts)
 
 
-def run_helm_template(chart_path: Path, version: str, extra_args: list[str], values_file: Path = Path("values.yaml"), output_dir: Path = Path("."), secrets: bool = False, verbose: bool = False, print_output: bool = True):
+def run_helm_template(chart_path: Path, version: str, extra_args: list[str], values_file: Path = Path("values.yaml"), output_dir: Path = Path("."), helm_config: dict = None, secrets: bool = False, verbose: bool = False, print_output: bool = True):
     """Run helm template command and optionally post-process Secrets to decode base64 values."""
-    cmd = [
-        "helm", "template",
-        str(chart_path),
+    if helm_config is None:
+        helm_config = {}
+
+    # Build the helm template command
+    # Syntax: helm template [NAME] [CHART] [flags]
+    # NAME is optional (release name), CHART is the chart path
+    cmd = ["helm", "template"]
+
+    # Add release name as positional argument if specified in helm configuration
+    release_name = helm_config.get("releaseName", "")
+    if release_name:
+        cmd.append(release_name)
+
+    # Add chart path
+    cmd.append(str(chart_path))
+
+    # Add other flags
+    cmd.extend([
         "--version", f"v{version}",
         "-f", str(values_file)
-    ] + extra_args
+    ])
+
+    # Add skipCrds flag if specified in helm configuration
+    if helm_config.get("skipCrds", False):
+        cmd.append("--skip-crds")
+
+    cmd.extend(extra_args)
 
     log(f"Running: {' '.join(cmd)}", verbose)
 
@@ -556,6 +597,11 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
     log(f"Version: {version}", verbose)
     log(f"Chart type: {'Git' if is_git_chart else 'Helm'}", verbose)
 
+    # Extract helm configuration (e.g., releaseName, skipCrds)
+    helm_config = extract_helm_config(app_yaml)
+    if helm_config:
+        log(f"Helm config: {helm_config}", verbose)
+
     # Download chart if needed
     download_chart(repo_url, chart_name, version, chart_dir, workdir, is_git_chart, verbose)
 
@@ -565,24 +611,25 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
     actual_chart_dir_name = Path(chart_name).name if is_git_chart else chart_name
     chart_path = chart_dir / actual_chart_dir_name
     log("Running helm template...", verbose)
-    run_helm_template(chart_path, version, extra_args, values_file, output_dir, secrets, verbose, print_output)
+    run_helm_template(chart_path, version, extra_args, values_file, output_dir, helm_config, secrets, verbose, print_output)
 
     manifest_file = ".manifest.secrets.yaml" if secrets else ".manifest.yaml"
     log(f"Output written to {output_dir / manifest_file}", verbose)
 
 
-def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[str], secrets: bool = False, verbose: bool = False, diff_sort: bool = False):
+def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, application_file: str, extra_args: list[str], secrets: bool = False, verbose: bool = False, sort: bool = False):
     """
-    Generate manifests from both git-committed and current state of application.yaml and values.yaml.
+    Generate manifests from both git-committed and current state of application file and values.yaml.
 
     Args:
         workdir: Working directory
         chart_dir: Directory for charts
         diff_ref: Git reference to diff against (default: HEAD, can be origin/main, --cached, etc.)
+        application_file: Application YAML filename
         extra_args: Additional helm template arguments
         secrets: Whether to decode base64 in Secrets
         verbose: Enable verbose logging
-        diff_sort: Sort YAML keys alphabetically before showing diff
+        sort: Sort YAML keys alphabetically before showing diff
     """
     # 1. Check if git repo
     if not check_git_repo(workdir, verbose):
@@ -592,12 +639,12 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[st
     log("Verified workdir is in a git repository", verbose)
 
     # 2. Check for changes
-    files_to_check = ["application.yaml", "values.yaml"]
+    files_to_check = [application_file, "values.yaml"]
     if not check_file_changes(workdir, files_to_check, verbose):
-        print("Error: No changes detected in application.yaml or values.yaml", file=sys.stderr)
+        print(f"Error: No changes detected in {application_file} or values.yaml", file=sys.stderr)
         sys.exit(1)
 
-    log("Detected changes in application.yaml or values.yaml", verbose)
+    log(f"Detected changes in {application_file} or values.yaml", verbose)
 
     # 3. Create .diff directory
     diff_dir = workdir / ".diff"
@@ -623,7 +670,7 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[st
     render_manifests(
         workdir=workdir,
         chart_dir=chart_dir,
-        application_yaml_path=diff_dir / "application.yaml",
+        application_yaml_path=diff_dir / application_file,
         values_file=diff_dir / "values.yaml",
         output_dir=diff_dir,
         extra_args=extra_args,
@@ -637,7 +684,7 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[st
     render_manifests(
         workdir=workdir,
         chart_dir=chart_dir,
-        application_yaml_path=workdir / "application.yaml",
+        application_yaml_path=workdir / application_file,
         values_file=workdir / "values.yaml",
         output_dir=workdir,
         extra_args=extra_args,
@@ -647,7 +694,7 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[st
     )
 
     # Sort manifests if requested
-    if diff_sort:
+    if sort:
         log("Sorting YAML keys in manifest files before diff...", verbose)
         sort_yaml_file(diff_dir / ".manifest.yaml", verbose)
         sort_yaml_file(workdir / ".manifest.yaml", verbose)
@@ -660,66 +707,69 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, extra_args: list[st
     subprocess.run(diff_cmd)
 
 
-def main():
-    """Main execution function."""
-    # Parse arguments
-    parser = argparse.ArgumentParser(
-        description="Extract chart info from application.yaml, download chart, and run helm template.",
-        add_help=True
-    )
-    parser.add_argument(
-        "--workdir",
-        type=str,
-        help="Working directory containing application.yaml (default: current directory)"
-    )
-    parser.add_argument(
-        "--chart-dir",
-        type=str,
-        help="Directory to download charts to (default: .chart)"
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--secrets",
-        action="store_true",
-        help="Decode base64 values in Secret resources and write to .manifest.secrets.yaml (disabled by default)"
-    )
-    parser.add_argument(
-        "--diff",
-        type=str,
-        default=None,
-        const="HEAD",
-        nargs="?",
-        help="Generate diff between current and specified git ref (default: HEAD, hint: origin/main or --cached)"
-    )
-    parser.add_argument(
-        "--diff-sort",
-        action="store_true",
-        help="Sort YAML keys alphabetically before showing diff"
-    )
+@click.group()
+@click.version_option(version=__version__, prog_name='argocd-helm-template')
+def cli():
+    """ArgoCD Helm Template - Render Helm charts from ArgoCD applications.
 
-    # Parse known args, keeping unknown ones for helm template
-    args, extra_args = parser.parse_known_args()
+    Extract chart information from application.yaml, download charts, and render
+    Kubernetes manifests using helm template.
+    """
+    pass
 
-    verbose = args.verbose
-    secrets = args.secrets
+
+@cli.command(context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
+@click.option(
+    '--workdir',
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help='Working directory containing application file and values.yaml (default: current directory)'
+)
+@click.option(
+    '--application',
+    default='application.yaml',
+    help='Application YAML filename (default: application.yaml)'
+)
+@click.option(
+    '--chart-dir',
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help='Directory to download charts to (default: .chart)'
+)
+@click.option(
+    '--verbose',
+    is_flag=True,
+    help='Enable verbose output'
+)
+@click.option(
+    '--secrets',
+    is_flag=True,
+    help='Decode base64 values in Secret resources and write to .manifest.secrets.yaml'
+)
+@click.pass_context
+def render(ctx, workdir, application, chart_dir, verbose, secrets):
+    """Render Kubernetes manifests from application.yaml.
+
+    Any additional arguments are passed through to 'helm template'.
+
+    Examples:
+
+      uv run argocd_helm_template.py render
+
+      uv run argocd_helm_template.py render --verbose --secrets
+
+      uv run argocd_helm_template.py render --namespace myapp
+    """
+    extra_args = list(ctx.args)
 
     # Resolve paths
-    workdir = Path(args.workdir).resolve() if args.workdir else Path.cwd()
-    chart_dir = Path(args.chart_dir).resolve() if args.chart_dir else workdir / ".chart"
+    workdir = workdir.resolve() if workdir else Path.cwd()
+    chart_dir = chart_dir.resolve() if chart_dir else workdir / ".chart"
 
     log(f"Working directory: {workdir}", verbose)
 
-    # Mode dispatcher - handle --diff mode early
-    if args.diff is not None:
-        diff_mode(workdir, chart_dir, args.diff, extra_args, secrets, verbose, args.diff_sort)
-        return
-
     # Normal mode - continue with standard template generation
-    application_yaml_path = workdir / "application.yaml"
+    application_yaml_path = workdir / application
     values_file = workdir / "values.yaml"
     output_dir = workdir
 
@@ -739,5 +789,68 @@ def main():
     )
 
 
+@cli.command(context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
+@click.argument('ref', default='HEAD', required=False)
+@click.option(
+    '--workdir',
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help='Working directory containing application file and values.yaml (default: current directory)'
+)
+@click.option(
+    '--application',
+    default='application.yaml',
+    help='Application YAML filename (default: application.yaml)'
+)
+@click.option(
+    '--chart-dir',
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help='Directory to download charts to (default: .chart)'
+)
+@click.option(
+    '--verbose',
+    is_flag=True,
+    help='Enable verbose output'
+)
+@click.option(
+    '--secrets',
+    is_flag=True,
+    help='Decode base64 values in Secret resources'
+)
+@click.option(
+    '--sort',
+    is_flag=True,
+    help='Sort YAML keys alphabetically before showing diff'
+)
+@click.pass_context
+def diff(ctx, ref, workdir, application, chart_dir, verbose, secrets, sort):
+    """Compare manifests against a git reference.
+
+    REF is the git reference to compare against (default: HEAD).
+    Common values: HEAD, origin/main, --cached
+
+    Any additional arguments are passed through to 'helm template'.
+
+    Examples:
+
+      uv run argocd_helm_template.py diff
+
+      uv run argocd_helm_template.py diff origin/main
+
+      uv run argocd_helm_template.py diff --sort --verbose
+    """
+    extra_args = list(ctx.args)
+
+    # Resolve paths
+    workdir = workdir.resolve() if workdir else Path.cwd()
+    chart_dir = chart_dir.resolve() if chart_dir else workdir / ".chart"
+
+    log(f"Working directory: {workdir}", verbose)
+
+    # Call diff_mode (existing logic)
+    diff_mode(workdir, chart_dir, ref, application, extra_args, secrets, verbose, sort)
+
+
 if __name__ == "__main__":
-    main()
+    cli()
