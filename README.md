@@ -223,26 +223,6 @@ spec:
       targetRevision: argo-cd-9.2.1
 ```
 
-## Design Principles
-
-### Path-based (No Directory Changes)
-The tool uses explicit paths rather than changing the working directory:
-- All paths are resolved relative to the specified workdir
-- No `os.chdir()` calls
-- Safe for use in libraries and concurrent operations
-
-### Git-aware Diffing
-- Works within any git repository subdirectory
-- Extracts original files from git references (HEAD, branches, tags)
-- Supports staged changes with `--cached`
-- Shows actual changes via interactive git diff
-
-### Verbose Debugging
-Enable `--verbose` to see all executed commands:
-- Git commands for repository operations
-- Helm commands for chart templating
-- File operations and transformations
-
 ## Testing
 
 ### Run Tests
@@ -257,36 +237,6 @@ pytest tests/test_chart_oci.py -v    # OCI registry
 pytest tests/test_chart_git.py -v    # Git repository
 ```
 
-### Test Scenarios
-
-1. **HTTPS Chart** (`tests/chart-https`)
-   - Repository: `https://argoproj.github.io/argo-helm`
-   - Chart: `argo-cd` v7.9.1
-
-2. **OCI Chart** (`tests/chart-oci`)
-   - Repository: `public.ecr.aws/karpenter`
-   - Chart: `karpenter` v1.5.2
-
-3. **Git Chart** (`tests/chart-git`)
-   - Repository: `https://github.com/argoproj/argo-helm`
-   - Path: `charts/argo-cd` revision `argo-cd-9.2.1`
-
-## Project Structure
-
-```
-.
-├── argocd_helm_template.py  # Main script
-├── README.md                 # This file
-├── pyproject.toml           # Project configuration
-└── tests/                   # Test scenarios
-    ├── test_chart_https.py  # HTTPS repository test
-    ├── test_chart_oci.py    # OCI registry test
-    ├── test_chart_git.py    # Git repository test
-    ├── chart-https/         # HTTPS test fixture
-    ├── chart-oci/           # OCI test fixture
-    └── chart-git/           # Git test fixture
-```
-
 ## Installation
 
 The script uses `uv` with embedded dependencies. No installation required - just run directly:
@@ -299,7 +249,3 @@ Required tools on your system:
 - `helm` - For rendering charts
 - `git` - For git operations
 - `uv` - Python script runner
-
-## License
-
-See LICENSE file for details.
