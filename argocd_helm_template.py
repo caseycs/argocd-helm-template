@@ -501,6 +501,10 @@ def run_helm_template(chart_path: Path, version: str, extra_args: list[str], val
         "-f", str(values_file)
     ])
 
+    # Add skipCrds flag if specified in helm configuration
+    if helm_config.get("skipCrds", False):
+        cmd.append("--skip-crds")
+
     cmd.extend(extra_args)
 
     log(f"Running: {' '.join(cmd)}", verbose)

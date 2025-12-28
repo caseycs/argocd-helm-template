@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager-test
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    name: develstaging
+    namespace: cert-manager
+  sources:
+    - repoURL: https://charts.jetstack.io
+      targetRevision: v1.16.0
+      chart: cert-manager
+      helm:
+        skipCrds: true
+    - repoURL: "https://bitbucket.org/org/argocd-repo.git"
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true

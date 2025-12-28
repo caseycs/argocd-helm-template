@@ -16,3 +16,4 @@ support
           value: $ARGOCD_APP_NAME
 
 
+bug with git repo when new tag was pushed
