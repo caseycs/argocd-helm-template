@@ -35,6 +35,7 @@ Thumbs.db
 
 # Project-specific
 .chart/
+.chart_repo/
 .manifest.yaml
 .manifest.secrets.yaml
 
