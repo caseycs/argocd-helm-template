@@ -5,6 +5,7 @@ description = "Extract chart info from application.yaml, download chart, and run
 dependencies = [
     "pyyaml",
 ]
+requires-python = ">=3.11"
 
 [project.optional-dependencies]
 dev = [
