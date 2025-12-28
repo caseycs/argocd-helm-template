@@ -24,11 +24,8 @@ Get near-instant feedback when working with LLMs to develop or modify Helm chart
 # Quickly see how your values render into actual manifests
 uv run argocd_helm_template.py render
 
-# Edit values.yaml, then re-run to see the changes immediately
+# Edit parameter in values.yaml or chart version in application.yaml, then re-run to see the changes immediately
 uv run argocd_helm_template.py render
-
-# Compare your changes to see what actually changed
-uv run argocd_helm_template.py diff --sort
 ```
 
 Useful for:
