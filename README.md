@@ -236,12 +236,7 @@ spec:
 
 ```bash
 # All tests
-pytest tests/ -v
-
-# Specific scenarios
-pytest tests/test_chart_https.py -v  # HTTPS repository
-pytest tests/test_chart_oci.py -v    # OCI registry
-pytest tests/test_chart_git.py -v    # Git repository
+uv run pytest tests/ -v
 ```
 
 ## Installation
