@@ -20,7 +20,29 @@ This generates two manifest files:
 
 Then shows an interactive diff to review all changes.
 
-### Use Case 2: Compare Different Deployment Branches
+### Use Case 2: AI-Assisted Chart Development with Instant Feedback
+Get near-instant feedback when working with LLMs to develop or modify Helm chart values. Use this tool to validate chart rendering as you iterate:
+
+```bash
+# Quickly see how your values render into actual manifests
+uv run argocd_helm_template.py render
+
+# Edit values.yaml, then re-run to see the changes immediately
+uv run argocd_helm_template.py render
+
+# Compare your changes to see what actually changed
+uv run argocd_helm_template.py diff --sort
+```
+
+Useful for:
+- Iterating on chart values with an LLM assistant
+- Validating that value changes produce expected manifest changes
+- Debugging helm template issues in real-time
+- Quickly prototyping chart configurations
+
+This enables a fast feedback loop where you can ask an AI to modify values, immediately render the results, and provide feedback for refinement.
+
+### Use Case 3: Review Resulting Manifest Diff Before Commit
 Review how manifests differ between your current branch and production:
 
 ```bash
@@ -32,30 +54,6 @@ Useful for:
 - Code review: See exact manifest changes in pull requests
 - Pre-deployment checks: Verify manifest changes before merging
 - Debugging: Compare manifests between branches to find discrepancies
-
-### Use Case 3: Normalize YAML for Cleaner Diffs
-Sort YAML keys alphabetically to reduce noise in diffs caused by inconsistent formatting:
-
-```bash
-# Show diff with sorted YAML keys (more readable)
-uv run argocd_helm_template.py diff --sort
-```
-
-Useful for:
-- Reducing spurious diffs from key reordering
-- Making manifest comparisons more readable
-- Focusing on actual changes vs. formatting changes
-
-### Use Case 4: Generate Manifests for Deployment
-Render final Kubernetes manifests to apply to a cluster:
-
-```bash
-# Generate manifests to stdout
-uv run argocd_helm_template.py render
-
-# Apply directly to cluster
-uv run argocd_helm_template.py render | kubectl apply -f -
-```
 
 ## Usage
 
