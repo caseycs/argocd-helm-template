@@ -2,8 +2,6 @@
 
 A command-line tool to extract chart information from ArgoCD `application.yaml`, download Helm charts, and render Kubernetes manifests using `helm template`. Includes manifest diffing capabilities to compare changes between git references.
 
-**Version 0.1.0** - Built with Click framework for an improved CLI experience.
-
 ## When This Tool is Useful
 
 ### Use Case 1: Preview Manifest Changes Before Committing
