@@ -8,13 +8,12 @@ A command-line tool to extract chart information from ArgoCD `application.yaml`,
 Compare how your Kubernetes manifests will change when updating `application.yaml` or `values.yaml`:
 
 ```bash
-# See what would change in your manifests
-uv run argocd_helm_template.py diff --verbose
+# See your manifests
+uv run argocd_helm_template.py diff
 ```
 
-This generates two manifest files:
+This also generates manifest file:
 - `.manifest.yaml` - Current manifests with your pending changes
-- `.diff/.manifest.yaml` - Original manifests from git HEAD
 
 Then shows an interactive diff to review all changes.
 
@@ -41,17 +40,27 @@ Useful for:
 This enables a fast feedback loop where you can ask an AI to modify values, immediately render the results, and provide feedback for refinement.
 
 ### Use Case 3: Review Resulting Manifest Diff Before Commit
-Review how manifests differ between your current branch and production:
+Review how manifests differ after making changes, between current version and other branch, etc:
 
 ```bash
+# Compare not commited yet changes
+uv run argocd_helm_template.py diff
+
 # Compare current changes against origin/main
 uv run argocd_helm_template.py diff origin/main
+
+# Compare last commit changes
+uv run argocd_helm_template.py diff HEAD^
 ```
 
 Useful for:
 - Code review: See exact manifest changes in pull requests
 - Pre-deployment checks: Verify manifest changes before merging
 - Debugging: Compare manifests between branches to find discrepancies
+
+This also generates two manifest files:
+- `.manifest.yaml` - Current manifests with your pending changes
+- `.diff/.manifest.yaml` - Original manifests using origin/main versions
 
 ## Usage
 
