@@ -61,6 +61,23 @@ def extract_chart_info(app_yaml: dict) -> tuple[str, str, str, bool]:
     raise ValueError("Could not find chart information in application.yaml")
 
 
+def extract_helm_config(app_yaml: dict) -> dict:
+    """
+    Extract helm configuration from application.yaml sources section.
+
+    Returns:
+        dict: Helm configuration (e.g., {releaseName: "custom-name", skipCrds: True})
+    """
+    sources = app_yaml.get("spec", {}).get("sources", [])
+
+    # Find the source with helm config
+    for source in sources:
+        if "helm" in source:
+            return source.get("helm", {})
+
+    return {}
+
+
 def is_oci_registry(repo_url: str) -> bool:
     """Check if the repository URL is an OCI registry."""
     return not repo_url.startswith(("http://", "https://"))
@@ -460,14 +477,31 @@ def process_secrets(yaml_output: str, secrets: bool = False, verbose: bool = Fal
     return '---\n' + '\n---\n'.join(result_parts)
 
 
-def run_helm_template(chart_path: Path, version: str, extra_args: list[str], values_file: Path = Path("values.yaml"), output_dir: Path = Path("."), secrets: bool = False, verbose: bool = False, print_output: bool = True):
+def run_helm_template(chart_path: Path, version: str, extra_args: list[str], values_file: Path = Path("values.yaml"), output_dir: Path = Path("."), helm_config: dict = None, secrets: bool = False, verbose: bool = False, print_output: bool = True):
     """Run helm template command and optionally post-process Secrets to decode base64 values."""
-    cmd = [
-        "helm", "template",
-        str(chart_path),
+    if helm_config is None:
+        helm_config = {}
+
+    # Build the helm template command
+    # Syntax: helm template [NAME] [CHART] [flags]
+    # NAME is optional (release name), CHART is the chart path
+    cmd = ["helm", "template"]
+
+    # Add release name as positional argument if specified in helm configuration
+    release_name = helm_config.get("releaseName", "")
+    if release_name:
+        cmd.append(release_name)
+
+    # Add chart path
+    cmd.append(str(chart_path))
+
+    # Add other flags
+    cmd.extend([
         "--version", f"v{version}",
         "-f", str(values_file)
-    ] + extra_args
+    ])
+
+    cmd.extend(extra_args)
 
     log(f"Running: {' '.join(cmd)}", verbose)
 
@@ -559,6 +593,11 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
     log(f"Version: {version}", verbose)
     log(f"Chart type: {'Git' if is_git_chart else 'Helm'}", verbose)
 
+    # Extract helm configuration (e.g., releaseName, skipCrds)
+    helm_config = extract_helm_config(app_yaml)
+    if helm_config:
+        log(f"Helm config: {helm_config}", verbose)
+
     # Download chart if needed
     download_chart(repo_url, chart_name, version, chart_dir, workdir, is_git_chart, verbose)
 
@@ -568,7 +607,7 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
     actual_chart_dir_name = Path(chart_name).name if is_git_chart else chart_name
     chart_path = chart_dir / actual_chart_dir_name
     log("Running helm template...", verbose)
-    run_helm_template(chart_path, version, extra_args, values_file, output_dir, secrets, verbose, print_output)
+    run_helm_template(chart_path, version, extra_args, values_file, output_dir, helm_config, secrets, verbose, print_output)
 
     manifest_file = ".manifest.secrets.yaml" if secrets else ".manifest.yaml"
     log(f"Output written to {output_dir / manifest_file}", verbose)
