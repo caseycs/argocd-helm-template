@@ -1,8 +1,8 @@
 end-to-end tests for all use-cases and flags
 
-support help flags:
-    releaseName: karpenter
-    skipCrds: true
++ support help flags:
++    releaseName: karpenter
++    skipCrds: true
 
 support applications without values
 
@@ -17,3 +17,5 @@ support
 
 
 bug with git repo when new tag was pushed
+
+support multiple sources (helm+raw declarations)

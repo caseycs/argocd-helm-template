@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter.karpenter.develstaging
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-40"
+spec:
+  project: default
+  destination:
+    name: develstaging
+    namespace: karpenter
+  sources:
+    - repoURL: public.ecr.aws/karpenter
+      targetRevision: 1.5.2
+      chart: karpenter
+      helm:
+        releaseName: karpenter
+        skipCrds: true
+        valueFiles:
+          - $values/tests/multiple-values/values1.yaml
+          - $values/tests/multiple-values/values2.yaml
+    - repoURL: "https://bitbucket.org/org/argocd-repo.git"
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    # automated:
+    #   prune: true
+    syncOptions:
+      - CreateNamespace=true

@@ -22,6 +22,17 @@ import click
 __version__ = "0.1.0"
 
 
+class KeyValueParamType(click.ParamType):
+    """Custom Click parameter type for key=value pairs."""
+    name = "key_value"
+
+    def convert(self, value, param, ctx):
+        if '=' not in value:
+            self.fail(f'{value} is not a valid key=value pair', param, ctx)
+        key, val = value.split('=', 1)
+        return (key.strip(), val.strip())
+
+
 def log(message: str, verbose: bool = False):
     """Print message only if verbose mode is enabled."""
     if verbose:
@@ -76,6 +87,28 @@ def extract_helm_config(app_yaml: dict) -> dict:
             return source.get("helm", {})
 
     return {}
+
+
+def extract_ref_sources(app_yaml: dict) -> dict:
+    """
+    Extract all sources with 'ref' field as a mapping: ref_name -> repoURL.
+
+    Ignores targetRevision and only includes sources with ref field defined.
+
+    Returns:
+        dict: Mapping of ref names to repository URLs (e.g., {"values": "https://github.com/org/repo"})
+    """
+    sources = app_yaml.get("spec", {}).get("sources", [])
+    ref_sources = {}
+
+    for source in sources:
+        if "ref" in source:
+            ref_name = source.get("ref")
+            repo_url = source.get("repoURL", "")
+            if ref_name and repo_url:
+                ref_sources[ref_name] = repo_url
+
+    return ref_sources
 
 
 def is_oci_registry(repo_url: str) -> bool:
@@ -163,6 +196,117 @@ def checkout_git_revision(repo_path: Path, revision: str, verbose: bool = False)
 
         if result.returncode != 0:
             raise RuntimeError(f"Failed to checkout {revision} even after fetch: {result.stderr}")
+
+
+def apply_ref_mapping_to_value_files(value_files: list[str], ref_mapping: dict, verbose: bool = False) -> list[Path]:
+    """
+    Apply ref mapping to valueFiles, replacing $ref_name/ prefixes with mapped paths.
+
+    Args:
+        value_files: List of value file paths (may contain $ref_name/ prefixes)
+        ref_mapping: Mapping of ref names to local paths
+        verbose: Enable verbose logging
+
+    Returns:
+        list[Path]: List of resolved value file paths
+    """
+    resolved_files = []
+
+    for vf in value_files:
+        # Check if value file starts with $ref_name/
+        if vf.startswith("$"):
+            # Extract ref name and path
+            parts = vf[1:].split("/", 1)
+            if len(parts) == 2:
+                ref_name, relative_path = parts
+                if ref_name in ref_mapping:
+                    resolved_path = ref_mapping[ref_name] / relative_path
+                    log(f"Mapped valueFile: {vf} -> {resolved_path}", verbose)
+                    resolved_files.append(resolved_path)
+                else:
+                    raise RuntimeError(f"Error: Ref '{ref_name}' in valueFile '{vf}' not found in mapping")
+            else:
+                raise RuntimeError(f"Error: valueFile '{vf}', ref/path expected but not found")
+        else:
+            raise RuntimeError(f"Error: valueFile '{vf}', should start with mapping")
+
+    return resolved_files
+
+
+def build_ref_mapping(ref_sources: dict, workdir: Path, ref_map_override: dict = None, verbose: bool = False) -> dict:
+    """
+    Build a mapping from ref names to local paths.
+
+    Priority:
+    1. If ref_map_override is provided, use those mappings
+    2. For the first ref source, use git root
+    3. If there are more ref sources and no mapping provided, fail with error
+
+    Returns:
+        dict: Mapping of ref names to local paths (e.g., {"values": Path("/git/root")})
+
+    Raises:
+        RuntimeError: If multiple ref sources exist without mapping
+    """
+    if not ref_sources:
+        return {}
+
+    ref_mapping = {}
+
+    if ref_map_override:
+        # Parse and apply override mappings
+        for ref_name, local_path in ref_map_override.items():
+            ref_mapping[ref_name] = Path(local_path)
+            log(f"Ref mapping override: {ref_name} -> {local_path}", verbose)
+    else:
+        # For the first ref source, use git root
+        first_ref_name = next(iter(ref_sources.keys()))
+        if len(ref_sources) > 1:
+            raise RuntimeError(
+                f"Error: Multiple ref sources found ({', '.join(ref_sources.keys())}) but no --ref-map provided. "
+                "Please specify --ref-map to map each ref to a local path (e.g., --ref-map values=/path/to/values --ref-map other=/path/to/other)"
+            )
+
+        git_root = resolve_git_root(workdir, verbose)
+        ref_mapping[first_ref_name] = git_root
+        log(f"Ref mapping: {first_ref_name} -> {git_root}", verbose)
+
+    return ref_mapping
+
+
+def resolve_git_root(workdir: Path, verbose: bool = False) -> Path:
+    """
+    Resolve the git repository root path from the working directory.
+
+    Checks if workdir is part of a git repository and returns the git root.
+
+    Returns:
+        Path to the git repository root
+
+    Raises:
+        RuntimeError: If workdir is not in a git repository
+    """
+    git_check = subprocess.run(
+        ["git", "-C", str(workdir), "rev-parse", "--git-dir"],
+        capture_output=True,
+        text=True
+    )
+
+    if git_check.returncode != 0:
+        raise RuntimeError(
+            f"Error: Working directory {workdir} is not in a git repository. "
+            "Cannot determine git root for ref sources."
+        )
+
+    git_dir = git_check.stdout.strip()
+    if git_dir == ".git":
+        log(f"Git root: {workdir}", verbose)
+        return workdir
+    else:
+        # git_dir is a relative or absolute path to .git
+        git_root = (workdir / git_dir).resolve().parent if not Path(git_dir).is_absolute() else Path(git_dir).parent
+        log(f"Git root: {git_root}", verbose)
+        return git_root
 
 
 def is_repo_added(repo_name: str, verbose: bool = False) -> bool:
@@ -477,7 +621,7 @@ def process_secrets(yaml_output: str, secrets: bool = False, verbose: bool = Fal
     return '---\n' + '\n---\n'.join(result_parts)
 
 
-def run_helm_template(chart_path: Path, version: str, extra_args: list[str], values_file: Path = Path("values.yaml"), output_dir: Path = Path("."), helm_config: dict = None, secrets: bool = False, verbose: bool = False, print_output: bool = True):
+def run_helm_template(chart_path: Path, version: str, extra_args: list[str], values_files: list[Path], output_dir: Path = Path("."), helm_config: dict = None, secrets: bool = False, verbose: bool = False, print_output: bool = True):
     """Run helm template command and optionally post-process Secrets to decode base64 values."""
     if helm_config is None:
         helm_config = {}
@@ -495,11 +639,12 @@ def run_helm_template(chart_path: Path, version: str, extra_args: list[str], val
     # Add chart path
     cmd.append(str(chart_path))
 
-    # Add other flags
-    cmd.extend([
-        "--version", f"v{version}",
-        "-f", str(values_file)
-    ])
+    # Add version flag
+    cmd.extend(["--version", f"v{version}"])
+
+    # Add all values files
+    for values_file in values_files:
+        cmd.extend(["-f", str(values_file)])
 
     # Add skipCrds flag if specified in helm configuration
     if helm_config.get("skipCrds", False):
@@ -543,6 +688,102 @@ def run_helm_template(chart_path: Path, version: str, extra_args: list[str], val
         print(processed_output, end="")
 
 
+def prepare_values_files(app_yaml: dict, workdir: Path, ref_map_override: dict, verbose: bool = False) -> list[Path]:
+    """
+    Prepare values files: extract ref sources, build mapping, and resolve value file paths.
+
+    Args:
+        app_yaml: Loaded application.yaml as dictionary
+        workdir: Working directory
+        ref_map_override: Override mapping from --ref-map
+        verbose: Enable verbose logging
+
+    Returns:
+        list[Path]: List of resolved value file paths
+    """
+    ref_sources = extract_ref_sources(app_yaml)
+    helm_config = extract_helm_config(app_yaml)
+
+    # Build ref mapping
+    try:
+        ref_mapping = build_ref_mapping(ref_sources, workdir, ref_map_override, verbose)
+    except RuntimeError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
+
+    # Process value files with ref mapping
+    values_files = []
+    if "valueFiles" in helm_config:
+        try:
+            values_files = apply_ref_mapping_to_value_files(helm_config["valueFiles"], ref_mapping, verbose)
+        except RuntimeError as e:
+            print(str(e), file=sys.stderr)
+            sys.exit(1)
+
+    return values_files
+
+
+def compute_helm_args(app_yaml: dict, workdir: Path, ref_map_override: dict = None, verbose: bool = False) -> list[str]:
+    """
+    Compute helm template command-line arguments from application.yaml.
+
+    Processes:
+    - Helm parameters: releaseName (with fallback to metadata.name), skipCrds
+    - Sources: create ref name => repoUrl dict
+    - Mapping: determine workdir repo root (if mapping not defined), validate all refs are mapped
+    - Value files: apply ref mapping and resolve paths
+
+    Args:
+        app_yaml: Loaded application.yaml as dictionary
+        workdir: Working directory
+        ref_map_override: Optional mapping of ref names to local paths
+        verbose: Enable verbose logging
+
+    Returns:
+        list[str]: Command-line arguments for helm template command.
+                   Includes release name (if present), -f arguments for values files,
+                   and --skip-crds flag (if enabled).
+
+    Raises:
+        click.ClickException: If mapping is incomplete or invalid
+    """
+    # Extract helm configuration
+    helm_config = extract_helm_config(app_yaml)
+
+    # Extract helm parameters: use releaseName from helm config, fallback to metadata.name
+    release_name = helm_config.get("releaseName") or app_yaml.get("metadata").get("name")
+
+    # Build arguments array, add release name
+    args = ['--release-name', release_name]
+    # Add skipCrds flag if enabled
+    if helm_config.get("skipCrds", False):
+        args.append("--skip-crds")
+
+    # Extract ref sources and build mapping
+    ref_sources = extract_ref_sources(app_yaml)
+    ref_map_override = ref_map_override or {}
+
+    # Build ref mapping
+    try:
+        ref_mapping = build_ref_mapping(ref_sources, workdir, ref_map_override, verbose)
+    except RuntimeError as e:
+        raise click.ClickException(str(e))
+
+    # Process value files with ref mapping
+    values_files = []
+    if "valueFiles" in helm_config:
+        try:
+            values_files = apply_ref_mapping_to_value_files(helm_config["valueFiles"], ref_mapping, verbose)
+        except RuntimeError as e:
+            raise click.ClickException(str(e))
+        
+    # Add values files
+    for values_file in values_files:
+        args.extend(["-f", str(values_file)])
+
+    return args
+
+
 def sort_yaml_file(file_path: Path, verbose: bool = False):
     """
     Sort YAML file keys alphabetically.
@@ -572,7 +813,7 @@ def sort_yaml_file(file_path: Path, verbose: bool = False):
             )
 
 
-def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path, values_file: Path, output_dir: Path, extra_args: list[str], secrets: bool = False, verbose: bool = False, print_output: bool = True):
+def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path, values_files: list[Path], output_dir: Path, extra_args: list[str], secrets: bool = False, verbose: bool = False, print_output: bool = True):
     """
     Load application.yaml, extract chart info, download chart, and render manifests.
 
@@ -580,7 +821,7 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
         workdir: Working directory
         chart_dir: Directory to download/store charts
         application_yaml_path: Path to application.yaml
-        values_file: Path to values.yaml
+        values_files: List of paths to values files
         output_dir: Directory to write manifests to
         extra_args: Additional helm template arguments
         secrets: Whether to decode base64 in Secrets
@@ -611,13 +852,13 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
     actual_chart_dir_name = Path(chart_name).name if is_git_chart else chart_name
     chart_path = chart_dir / actual_chart_dir_name
     log("Running helm template...", verbose)
-    run_helm_template(chart_path, version, extra_args, values_file, output_dir, helm_config, secrets, verbose, print_output)
+    run_helm_template(chart_path, version, extra_args, values_files, output_dir, helm_config, secrets, verbose, print_output)
 
     manifest_file = ".manifest.secrets.yaml" if secrets else ".manifest.yaml"
     log(f"Output written to {output_dir / manifest_file}", verbose)
 
 
-def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, application_file: str, extra_args: list[str], secrets: bool = False, verbose: bool = False, sort: bool = False):
+def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, application_file: str, extra_args: list[str], ref_map_override: dict = None, secrets: bool = False, verbose: bool = False, sort: bool = False):
     """
     Generate manifests from both git-committed and current state of application file and values.yaml.
 
@@ -627,6 +868,7 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, application_file: s
         diff_ref: Git reference to diff against (default: HEAD, can be origin/main, --cached, etc.)
         application_file: Application YAML filename
         extra_args: Additional helm template arguments
+        ref_map_override: Optional mapping of ref names to local paths
         secrets: Whether to decode base64 in Secrets
         verbose: Enable verbose logging
         sort: Sort YAML keys alphabetically before showing diff
@@ -639,12 +881,11 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, application_file: s
     log("Verified workdir is in a git repository", verbose)
 
     # 2. Check for changes
-    files_to_check = [application_file, "values.yaml"]
-    if not check_file_changes(workdir, files_to_check, verbose):
-        print(f"Error: No changes detected in {application_file} or values.yaml", file=sys.stderr)
+    if not check_file_changes(workdir, [application_file], verbose):
+        print(f"Error: No changes detected in {application_file}", file=sys.stderr)
         sys.exit(1)
 
-    log(f"Detected changes in {application_file} or values.yaml", verbose)
+    log(f"Detected changes in {application_file}", verbose)
 
     # 3. Create .diff directory
     diff_dir = workdir / ".diff"
@@ -654,24 +895,39 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, application_file: s
     diff_dir.mkdir(parents=True, exist_ok=True)
     log(f"Created .diff directory at {diff_dir}", verbose)
 
-    # 4. Extract original files from git
-    for filename in files_to_check:
-        try:
-            log(f"Extracting {filename} from git {diff_ref}...", verbose)
-            extract_git_file(workdir, filename, diff_dir / filename, diff_ref, verbose)
-        except Exception as e:
-            print(f"Error: Could not extract {filename} from git: {e}", file=sys.stderr)
-            sys.exit(1)
+    # 4. Extract original application file from git
+    try:
+        log(f"Extracting {application_file} from git {diff_ref}...", verbose)
+        extract_git_file(workdir, application_file, diff_dir / application_file, diff_ref, verbose)
+    except Exception as e:
+        print(f"Error: Could not extract {application_file} from git: {e}", file=sys.stderr)
+        sys.exit(1)
 
     log("Successfully extracted files from git", verbose)
 
-    # 5. Render original manifests (from .diff/)
+    # 5. Load both original and current application files
+    try:
+        original_app_yaml = load_application_yaml(diff_dir / application_file, verbose)
+        current_app_yaml = load_application_yaml(workdir / application_file, verbose)
+    except Exception as e:
+        print(f"Error: Could not load application files: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # 6. Prepare values files for both versions
+    try:
+        original_values_files = prepare_values_files(original_app_yaml, workdir, ref_map_override or {}, verbose)
+        current_values_files = prepare_values_files(current_app_yaml, workdir, ref_map_override or {}, verbose)
+    except Exception as e:
+        print(f"Error: Could not prepare values files: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # 7. Render original manifests (from .diff/)
     log("Rendering manifests from original (committed) files...", verbose)
     render_manifests(
         workdir=workdir,
         chart_dir=chart_dir,
         application_yaml_path=diff_dir / application_file,
-        values_file=diff_dir / "values.yaml",
+        values_files=original_values_files,
         output_dir=diff_dir,
         extra_args=extra_args,
         secrets=secrets,
@@ -679,13 +935,13 @@ def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, application_file: s
         print_output=False
     )
 
-    # 6. Render current manifests (to ./)
+    # 8. Render current manifests (to ./)
     log("Rendering manifests from current files...", verbose)
     render_manifests(
         workdir=workdir,
         chart_dir=chart_dir,
         application_yaml_path=workdir / application_file,
-        values_file=workdir / "values.yaml",
+        values_files=current_values_files,
         output_dir=workdir,
         extra_args=extra_args,
         secrets=secrets,
@@ -746,8 +1002,14 @@ def cli():
     is_flag=True,
     help='Decode base64 values in Secret resources and write to .manifest.secrets.yaml'
 )
+@click.option(
+    '--ref-map',
+    multiple=True,
+    type=KeyValueParamType(),
+    help='Map ref sources to local paths (use multiple times: --ref-map ref1=path1 --ref-map ref2=path2). If not provided, uses workdir git root for the first one.'
+)
 @click.pass_context
-def render(ctx, workdir, application, chart_dir, verbose, secrets):
+def render(ctx, workdir, application, chart_dir, verbose, secrets, ref_map):
     """Render Kubernetes manifests from application.yaml.
 
     Any additional arguments are passed through to 'helm template'.
@@ -770,17 +1032,27 @@ def render(ctx, workdir, application, chart_dir, verbose, secrets):
 
     # Normal mode - continue with standard template generation
     application_yaml_path = workdir / application
-    values_file = workdir / "values.yaml"
     output_dir = workdir
 
     log(f"Application YAML: {application_yaml_path}", verbose)
+
+    # Convert ref_map tuple to dictionary
+    ref_map_override = {}
+    if ref_map:
+        for ref_name, local_path in ref_map:
+            ref_map_override[ref_name] = local_path
+            log(f"Ref map parameter: {ref_name} -> {local_path}", verbose)
+
+    # Load and prepare values files
+    app_yaml = load_application_yaml(application_yaml_path)
+    values_files = prepare_values_files(app_yaml, workdir, ref_map_override, verbose)
 
     # Render manifests using common function
     render_manifests(
         workdir=workdir,
         chart_dir=chart_dir,
         application_yaml_path=application_yaml_path,
-        values_file=values_file,
+        values_files=values_files,
         output_dir=output_dir,
         extra_args=extra_args,
         secrets=secrets,
@@ -823,8 +1095,14 @@ def render(ctx, workdir, application, chart_dir, verbose, secrets):
     is_flag=True,
     help='Sort YAML keys alphabetically before showing diff'
 )
+@click.option(
+    '--ref-map',
+    multiple=True,
+    type=KeyValueParamType(),
+    help='Map repository refs to local paths (e.g., --ref-map values=/path/to/local)'
+)
 @click.pass_context
-def diff(ctx, ref, workdir, application, chart_dir, verbose, secrets, sort):
+def diff(ctx, ref, workdir, application, chart_dir, verbose, secrets, sort, ref_map):
     """Compare manifests against a git reference.
 
     REF is the git reference to compare against (default: HEAD).
@@ -848,8 +1126,11 @@ def diff(ctx, ref, workdir, application, chart_dir, verbose, secrets, sort):
 
     log(f"Working directory: {workdir}", verbose)
 
+    # Convert ref_map tuples to dictionary
+    ref_map_dict = dict(ref_map) if ref_map else {}
+
     # Call diff_mode (existing logic)
-    diff_mode(workdir, chart_dir, ref, application, extra_args, secrets, verbose, sort)
+    diff_mode(workdir, chart_dir, ref, application, extra_args, ref_map_dict, secrets, verbose, sort)
 
 
 if __name__ == "__main__":

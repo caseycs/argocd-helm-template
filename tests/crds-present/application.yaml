@@ -12,7 +12,11 @@ spec:
     - repoURL: https://charts.jetstack.io
       targetRevision: v1.16.0
       chart: cert-manager
-      helm: {}
+      helm:
+        releaseName: karpenter
+        skipCrds: true
+        valueFiles:
+          - $values/tests/crds-present/values.yaml
     - repoURL: "https://bitbucket.org/org/argocd-repo.git"
       targetRevision: main
       ref: values

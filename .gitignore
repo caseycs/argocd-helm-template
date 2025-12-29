@@ -1,7 +1,7 @@
 # Python packaging
 *.egg-info/
 dist/
-build/
+bgit ild/
 *.egg
 *.whl
 

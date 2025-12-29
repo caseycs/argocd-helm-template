@@ -11,7 +11,7 @@ from click.testing import CliRunner
 from argocd_helm_template import cli
 
 
-def test_skip_crds_excludes_custom_resource_definitions():
+def test_crds_skip():
     """End-to-end test: Verify skipCrds flag prevents CRDs from being rendered.
 
     Tests that when skipCrds: true is set in helm configuration:
@@ -30,7 +30,7 @@ def test_skip_crds_excludes_custom_resource_definitions():
     Tests against: https://charts.jetstack.io/cert-manager with skipCrds enabled
     """
     runner = CliRunner()
-    test_dir = Path(__file__).parent / "skip-crds"
+    test_dir = Path(__file__).parent / "crds-skip"
     chart_dir = test_dir / ".chart"
 
     # Invoke the render command via Click CLI
@@ -52,7 +52,7 @@ def test_skip_crds_excludes_custom_resource_definitions():
     assert chart_yaml.exists(), f"Chart.yaml not found at {chart_yaml}"
 
 
-def test_without_skip_crds_includes_custom_resource_definitions():
+def test_crds_present():
     """End-to-end test: Verify CRDs are included when skipCrds is not set.
 
     Tests that when skipCrds is NOT set in helm configuration:
@@ -71,7 +71,7 @@ def test_without_skip_crds_includes_custom_resource_definitions():
     Tests against: https://charts.jetstack.io/cert-manager without skipCrds
     """
     runner = CliRunner()
-    test_dir = Path(__file__).parent / "without-skip-crds"
+    test_dir = Path(__file__).parent / "crds-present"
     chart_dir = test_dir / ".chart"
 
     # Invoke the render command via Click CLI
