@@ -8,13 +8,12 @@ A command-line tool to extract chart information from ArgoCD `application.yaml`,
 Compare how your Kubernetes manifests will change when updating `application.yaml` or `values.yaml`:
 
 ```bash
-# See what would change in your manifests
-uv run argocd_helm_template.py diff --verbose
+# See your manifests
+uv run argocd_helm_template.py diff
 ```
 
-This generates two manifest files:
+This also generates manifest file:
 - `.manifest.yaml` - Current manifests with your pending changes
-- `.diff/.manifest.yaml` - Original manifests from git HEAD
 
 Then shows an interactive diff to review all changes.
 
@@ -25,11 +24,8 @@ Get near-instant feedback when working with LLMs to develop or modify Helm chart
 # Quickly see how your values render into actual manifests
 uv run argocd_helm_template.py render
 
-# Edit values.yaml, then re-run to see the changes immediately
+# Edit parameter in values.yaml or chart version in application.yaml, then re-run to see the changes immediately
 uv run argocd_helm_template.py render
-
-# Compare your changes to see what actually changed
-uv run argocd_helm_template.py diff --sort
 ```
 
 Useful for:
@@ -41,17 +37,27 @@ Useful for:
 This enables a fast feedback loop where you can ask an AI to modify values, immediately render the results, and provide feedback for refinement.
 
 ### Use Case 3: Review Resulting Manifest Diff Before Commit
-Review how manifests differ between your current branch and production:
+Review how manifests differ after making changes, between current version and other branch, etc:
 
 ```bash
+# Compare not commited yet changes
+uv run argocd_helm_template.py diff
+
 # Compare current changes against origin/main
 uv run argocd_helm_template.py diff origin/main
+
+# Compare last commit changes
+uv run argocd_helm_template.py diff HEAD^
 ```
 
 Useful for:
 - Code review: See exact manifest changes in pull requests
 - Pre-deployment checks: Verify manifest changes before merging
 - Debugging: Compare manifests between branches to find discrepancies
+
+This also generates two manifest files:
+- `.manifest.yaml` - Current manifests with your pending changes
+- `.diff/.manifest.yaml` - Original manifests using origin/main versions
 
 ## Usage
 
@@ -227,12 +233,7 @@ spec:
 
 ```bash
 # All tests
-pytest tests/ -v
-
-# Specific scenarios
-pytest tests/test_chart_https.py -v  # HTTPS repository
-pytest tests/test_chart_oci.py -v    # OCI registry
-pytest tests/test_chart_git.py -v    # Git repository
+uv run pytest tests/ -v
 ```
 
 ## Installation
