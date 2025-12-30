@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from click.testing import CliRunner
 
 from argocd_helm_template import cli
+from ._utils import cleanup_test_dir
 
 
 def test_multiple_values_files_render():
@@ -23,12 +24,12 @@ def test_multiple_values_files_render():
 
     The test uses valueFiles with $values/ ref mapping to multiple local files.
 
-    Note: Cache directories are cleaned up automatically by conftest.py pre-hook.
-
     Tests against: public.ecr.aws/karpenter with multiple values files
     """
-    runner = CliRunner()
     test_dir = Path(__file__).parent / "multiple-values"
+    cleanup_test_dir(test_dir)
+
+    runner = CliRunner()
     chart_dir = test_dir / ".chart"
 
     # Invoke the render command via Click CLI

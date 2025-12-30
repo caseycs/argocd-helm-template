@@ -1,0 +1,24 @@
+## diff plan
+
+render initial (head or origin/main) version (application+values files)
+render actual version
+show diff
+
+## how to template initial version?
+
+chart (easy)
+values files (different paths)
+
+simplest solution:
+
+check if workdir is repo root
+
+treat first ref as workdir repo root, fail if there are multiple references
+
+iterate over files, checkout their originnal versions to .diff
+
+render original version
+
+render current version
+
+show diff 

@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from click.testing import CliRunner
 
 from argocd_helm_template import cli
+from ._utils import cleanup_test_dir
 
 
 def test_oci_chart_render_e2e():
@@ -20,12 +21,12 @@ def test_oci_chart_render_e2e():
     3. Verifies YAML output is present
     4. Verifies Chart.yaml is downloaded
 
-    Note: Cache directories are cleaned up automatically by conftest.py pre-hook.
-
     Tests against: public.ecr.aws/karpenter karpenter:1.5.2
     """
-    runner = CliRunner()
     test_dir = Path(__file__).parent / "chart-oci"
+    cleanup_test_dir(test_dir)
+
+    runner = CliRunner()
     chart_dir = test_dir / ".chart"
 
     # Invoke the render command via Click CLI
@@ -51,12 +52,12 @@ def test_https_chart_render_e2e():
     3. Verifies YAML output is present
     4. Verifies Chart.yaml is downloaded
 
-    Note: Cache directories are cleaned up automatically by conftest.py pre-hook.
-
     Tests against: https://argoproj.github.io/argo-helm argo-cd:7.9.1
     """
-    runner = CliRunner()
     test_dir = Path(__file__).parent / "chart-https"
+    cleanup_test_dir(test_dir)
+
+    runner = CliRunner()
     chart_dir = test_dir / ".chart"
 
     # Invoke the render command via Click CLI
@@ -83,12 +84,12 @@ def test_git_chart_render_e2e():
     4. Verifies Chart.yaml is cloned from git in .chart_repo
     5. Verifies symlink is created in .chart directory
 
-    Note: Cache directories are cleaned up automatically by conftest.py pre-hook.
-
     Tests against: https://github.com/argoproj/argo-helm charts/argo-events:argo-events-2.4.19
     """
-    runner = CliRunner()
     test_dir = Path(__file__).parent / "chart-git"
+    cleanup_test_dir(test_dir)
+
+    runner = CliRunner()
     chart_repo_dir = test_dir / ".chart_repo"
     chart_dir = test_dir / ".chart"
 

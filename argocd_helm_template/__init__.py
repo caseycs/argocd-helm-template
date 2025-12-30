@@ -9,7 +9,7 @@ import click
 
 from .argocd_application import ArgocdApplication
 from .utils import log
-from .chart_manager import download_chart
+from .chart_manager import download_helm_chart
 from .helm_executor import run_helm_template
 from .ref_mapper import build_ref_mapping, apply_ref_mapping_to_value_files
 
@@ -135,7 +135,7 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
         raise click.ClickException(f"Invalid application.yaml: {str(e)}")
 
     # Log chart source info
-    chart_source = app.get_chart_source()
+    chart_source = app.get_helm_chart_source()
     chart_name = chart_source.get("chart" if app.is_helm_repo() else "path", "")
     repo_url = chart_source.get("repoURL", "")
     version = chart_source.get("targetRevision", "").lstrip("v")
@@ -147,7 +147,7 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
     log(f"Chart type: {'Git' if is_git_chart else 'Helm'}", verbose)
 
     # Download chart if needed and get the chart path
-    chart_path = download_chart(app, chart_dir, workdir, verbose)
+    chart_path = download_helm_chart(app, chart_dir, workdir, verbose)
 
     # Compute helm arguments (includes release name, values files, skipCrds)
     helm_args = compute_helm_args(app, workdir, ref_map_override, verbose)

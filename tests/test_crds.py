@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from click.testing import CliRunner
 
 from argocd_helm_template import cli
+from ._utils import cleanup_test_dir
 
 
 def test_crds_skip():
@@ -25,12 +26,12 @@ def test_crds_skip():
     which includes both CRDs and application resources. The --skip-crds flag
     should prevent CRD manifests from appearing in the rendered output.
 
-    Note: Cache directories are cleaned up automatically by conftest.py pre-hook.
-
     Tests against: https://charts.jetstack.io/cert-manager with skipCrds enabled
     """
-    runner = CliRunner()
     test_dir = Path(__file__).parent / "crds-skip"
+    cleanup_test_dir(test_dir)
+
+    runner = CliRunner()
     chart_dir = test_dir / ".chart"
 
     # Invoke the render command via Click CLI
@@ -66,12 +67,12 @@ def test_crds_present():
     When skipCrds is not specified, the cert-manager chart should render with
     all its CustomResourceDefinitions included.
 
-    Note: Cache directories are cleaned up automatically by conftest.py pre-hook.
-
     Tests against: https://charts.jetstack.io/cert-manager without skipCrds
     """
-    runner = CliRunner()
     test_dir = Path(__file__).parent / "crds-present"
+    cleanup_test_dir(test_dir)
+
+    runner = CliRunner()
     chart_dir = test_dir / ".chart"
 
     # Invoke the render command via Click CLI

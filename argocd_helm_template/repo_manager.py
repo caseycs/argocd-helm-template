@@ -2,7 +2,7 @@
 
 import subprocess
 import yaml
-from .utils import log, get_repo_name_from_url
+from .utils import log, get_helm_repo_name_from_url
 
 
 def is_repo_added(repo_name: str, verbose: bool = False) -> bool:
@@ -24,7 +24,7 @@ def is_repo_added(repo_name: str, verbose: bool = False) -> bool:
         return False
 
 
-def ensure_repo_added(repo_name: str, repo_url: str, verbose: bool = False):
+def ensure_helm_repo_added(repo_name: str, repo_url: str, verbose: bool = False):
     """Ensure Helm repository is added and updated."""
     if not is_repo_added(repo_name, verbose):
         log(f"Adding Helm repository {repo_name}...", verbose)

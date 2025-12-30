@@ -11,7 +11,7 @@ def log(message: str, verbose: bool = False):
         print(message, file=sys.stderr)
 
 
-def get_repo_name_from_url(repo_url: str) -> str:
+def get_helm_repo_name_from_url(repo_url: str) -> str:
     """
     Extract repository name from Helm repo URL.
     For https://prometheus-community.github.io/helm-charts, return 'prometheus-community.github.io-helm-charts'
@@ -37,7 +37,7 @@ def get_repo_name_from_url(repo_url: str) -> str:
 def get_git_cache_dir(repo_url: str, workdir: Path) -> Path:
     """Get the cache directory path for a Git repository in .chart_repo within the working directory."""
     cache_root = workdir / ".chart_repo"
-    repo_name = get_repo_name_from_url(repo_url)
+    repo_name = get_helm_repo_name_from_url(repo_url)
     return cache_root / repo_name
 
 

@@ -19,3 +19,7 @@ support
 bug with git repo when new tag was pushed
 
 support multiple sources (helm+raw declarations)
+
+support local chart development (use local copy instead of git clone, repo registry or OCI pull)
+
+support additional declarations (useful when chars does not support extra resources)

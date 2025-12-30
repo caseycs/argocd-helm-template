@@ -218,7 +218,7 @@ class ArgocdApplication:
 
     # ========== Source Information ==========
 
-    def get_chart_source(self) -> Optional[dict]:
+    def get_helm_chart_source(self) -> Optional[dict]:
         """
         Get the source that contains chart information (read-only copy).
 

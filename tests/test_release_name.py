@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from click.testing import CliRunner
 
 from argocd_helm_template import cli
+from ._utils import cleanup_test_dir
 
 
 def test_release_name_override():
@@ -24,12 +25,12 @@ def test_release_name_override():
     which should appear in the rendered manifests instead of the default
     release name.
 
-    Note: Cache directories are cleaned up automatically by conftest.py pre-hook.
-
     Tests against: public.ecr.aws/karpenter with custom release name
     """
-    runner = CliRunner()
     test_dir = Path(__file__).parent / "release-name"
+    cleanup_test_dir(test_dir)
+
+    runner = CliRunner()
     chart_dir = test_dir / ".chart"
 
     # Invoke the render command via Click CLI
