@@ -2,7 +2,7 @@
 
 import subprocess
 import yaml
-from utils import log, get_repo_name_from_url
+from .utils import log, get_repo_name_from_url
 
 
 def is_repo_added(repo_name: str, verbose: bool = False) -> bool:

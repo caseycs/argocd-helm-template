@@ -4,7 +4,7 @@ import base64
 import subprocess
 from pathlib import Path
 import yaml
-from utils import log
+from .utils import log
 
 
 class LiteralString(str):

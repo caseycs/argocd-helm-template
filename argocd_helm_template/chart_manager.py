@@ -4,10 +4,10 @@ import subprocess
 import shutil
 from pathlib import Path
 import yaml
-from argocd_application import ArgocdApplication
-from utils import log, get_repo_name_from_url
-from repo_manager import ensure_repo_added
-from git_helper import clone_or_update_git_repo, checkout_git_revision
+from .argocd_application import ArgocdApplication
+from .utils import log, get_repo_name_from_url
+from .repo_manager import ensure_repo_added
+from .git_helper import clone_or_update_git_repo, checkout_git_revision
 
 
 def should_download_chart(chart_dir: Path, chart_name: str, version: str, is_git: bool = False) -> bool:

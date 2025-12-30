@@ -9,7 +9,7 @@ Compare how your Kubernetes manifests will change when updating `application.yam
 
 ```bash
 # See your manifests
-uv run argocd_helm_template.py diff
+argocd-helm-template diff
 ```
 
 This also generates manifest file:
@@ -22,10 +22,10 @@ Get near-instant feedback when working with LLMs to develop or modify Helm chart
 
 ```bash
 # Quickly see how your values render into actual manifests
-uv run argocd_helm_template.py render
+argocd-helm-template render
 
 # Edit parameter in values.yaml or chart version in application.yaml, then re-run to see the changes immediately
-uv run argocd_helm_template.py render
+argocd-helm-template render
 ```
 
 Useful for:
@@ -41,13 +41,13 @@ Review how manifests differ after making changes, between current version and ot
 
 ```bash
 # Compare not commited yet changes
-uv run argocd_helm_template.py diff
+argocd-helm-template diff
 
 # Compare current changes against origin/main
-uv run argocd_helm_template.py diff origin/main
+argocd-helm-template diff origin/main
 
 # Compare last commit changes
-uv run argocd_helm_template.py diff HEAD^
+argocd-helm-template diff HEAD^
 ```
 
 Useful for:
@@ -59,16 +59,38 @@ This also generates two manifest files:
 - `.manifest.yaml` - Current manifests with your pending changes
 - `.diff/.manifest.yaml` - Original manifests using origin/main versions
 
+## Installation
+
+### Requirements
+
+- Python 3.11+
+- Helm 3.x
+- kubectl (for helm template execution)
+
+### Via pip
+
+```bash
+pip install -e .
+argocd-helm-template render
+```
+
+### Development (Module Invocation)
+
+```bash
+python -m argocd_helm_template render
+python -m argocd_helm_template diff
+```
+
 ## Usage
 
 The tool provides two main commands: `render` and `diff`.
 
 ```bash
 # Render manifests
-uv run argocd_helm_template.py render [OPTIONS] [additional helm template args]
+argocd-helm-template render [OPTIONS] [additional helm template args]
 
 # Compare manifests
-uv run argocd_helm_template.py diff [REF] [OPTIONS] [additional helm template args]
+argocd-helm-template diff [REF] [OPTIONS] [additional helm template args]
 ```
 
 ### Common Options (available for both commands)
@@ -84,7 +106,7 @@ uv run argocd_helm_template.py diff [REF] [OPTIONS] [additional helm template ar
 Renders Kubernetes manifests from your `application.yaml` and `values.yaml`.
 
 ```bash
-uv run argocd_helm_template.py render [OPTIONS] [additional helm template args]
+argocd-helm-template render [OPTIONS] [additional helm template args]
 ```
 
 ### Diff Command
@@ -92,7 +114,7 @@ uv run argocd_helm_template.py render [OPTIONS] [additional helm template args]
 Compares manifests between your current state and a git reference.
 
 ```bash
-uv run argocd_helm_template.py diff [REF] [OPTIONS] [additional helm template args]
+argocd-helm-template diff [REF] [OPTIONS] [additional helm template args]
 ```
 
 - `REF` - Git reference to compare against (default: `HEAD`)
@@ -107,57 +129,57 @@ uv run argocd_helm_template.py diff [REF] [OPTIONS] [additional helm template ar
 
 #### Generate manifests (render command)
 ```bash
-uv run argocd_helm_template.py render
+argocd-helm-template render
 ```
 
 #### Render with verbose output
 ```bash
-uv run argocd_helm_template.py render --verbose
+argocd-helm-template render --verbose
 ```
 
 #### Render with decoded secrets
 ```bash
-uv run argocd_helm_template.py render --secrets
+argocd-helm-template render --secrets
 ```
 
 #### Preview changes with verbose output
 ```bash
-uv run argocd_helm_template.py diff --verbose
+argocd-helm-template diff --verbose
 ```
 
 #### Compare against main branch with sorted output
 ```bash
-uv run argocd_helm_template.py diff origin/main --sort
+argocd-helm-template diff origin/main --sort
 ```
 
 #### Show staged changes only (with sort)
 ```bash
-uv run argocd_helm_template.py diff --cached --sort
+argocd-helm-template diff --cached --sort
 ```
 
 #### Decode secrets and show diff
 ```bash
-uv run argocd_helm_template.py diff --secrets
+argocd-helm-template diff --secrets
 ```
 
 #### Render manifests from specific workdir
 ```bash
-uv run argocd_helm_template.py render --workdir ./deployments/staging
+argocd-helm-template render --workdir ./deployments/staging
 ```
 
 #### Use custom application filename
 ```bash
-uv run argocd_helm_template.py render --application my-application.yaml
-uv run argocd_helm_template.py diff --application production.yaml
+argocd-helm-template render --application my-application.yaml
+argocd-helm-template diff --application production.yaml
 ```
 
 #### Pass extra helm template arguments
 ```bash
 # Render with namespace override
-uv run argocd_helm_template.py render --namespace myapp
+argocd-helm-template render --namespace myapp
 
 # Diff with custom helm values
-uv run argocd_helm_template.py diff origin/main --set image.tag=v1.2.3
+argocd-helm-template diff origin/main --set image.tag=v1.2.3
 ```
 
 ## How It Works
@@ -227,24 +249,23 @@ spec:
       targetRevision: argo-cd-9.2.1
 ```
 
-## Testing
+## Development & Testing
 
-### Run Tests
-
-```bash
-# All tests
-uv run pytest tests/ -v
-```
-
-## Installation
-
-The script uses `uv` with embedded dependencies. No installation required - just run directly:
+### Running Tests
 
 ```bash
-uv run argocd_helm_template.py --help
+# Run all tests
+pytest tests/ -v
+
+# Run specific test file
+pytest tests/test_compute_helm_args.py -v
 ```
 
-Required tools on your system:
-- `helm` - For rendering charts
-- `git` - For git operations
-- `uv` - Python script runner
+### Development Setup
+
+For development, you can use the module directly:
+
+```bash
+python -m argocd_helm_template render
+python -m argocd_helm_template diff
+```

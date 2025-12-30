@@ -10,7 +10,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from argocd_helm_template import compute_helm_args
-from argocd_application import ArgocdApplication
+from argocd_helm_template.argocd_application import ArgocdApplication
 import click
 
 

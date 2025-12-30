@@ -2,7 +2,7 @@
 
 import subprocess
 from pathlib import Path
-from utils import log
+from .utils import log
 
 
 def resolve_git_root(workdir: Path, verbose: bool = False) -> Path:
@@ -113,7 +113,7 @@ def clone_or_update_git_repo(repo_url: str, workdir: Path, verbose: bool = False
     Returns:
         Path to the cached repository
     """
-    from utils import get_git_cache_dir
+    from .utils import get_git_cache_dir
 
     cache_dir = get_git_cache_dir(repo_url, workdir)
 

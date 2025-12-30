@@ -1,11 +1,3 @@
-#!/usr/bin/env -S uv run --quiet --script
-# /// script
-# dependencies = [
-#   "pyyaml",
-#   "click>=8.0",
-# ]
-# ///
-
 """
 ArgoCD Helm Template - Render Helm charts from ArgoCD applications.
 Supports rendering Kubernetes manifests from ArgoCD application definitions.
@@ -15,11 +7,11 @@ from pathlib import Path
 import yaml
 import click
 
-from argocd_application import ArgocdApplication
-from utils import log
-from chart_manager import download_chart
-from helm_executor import run_helm_template
-from ref_mapper import build_ref_mapping, apply_ref_mapping_to_value_files
+from .argocd_application import ArgocdApplication
+from .utils import log
+from .chart_manager import download_chart
+from .helm_executor import run_helm_template
+from .ref_mapper import build_ref_mapping, apply_ref_mapping_to_value_files
 
 __version__ = "0.1.0"
 
@@ -224,11 +216,11 @@ def render(ctx, workdir, application, chart_dir, verbose, secrets, ref_map):
 
     Examples:
 
-      uv run argocd_helm_template.py render
+      argocd-helm-template render
 
-      uv run argocd_helm_template.py render --verbose --secrets
+      argocd-helm-template render --verbose --secrets
 
-      uv run argocd_helm_template.py render --namespace myapp
+      argocd-helm-template render --namespace myapp
     """
     extra_args = list(ctx.args)
 
@@ -264,5 +256,4 @@ def render(ctx, workdir, application, chart_dir, verbose, secrets, ref_map):
     )
 
 
-if __name__ == "__main__":
-    cli()
+__all__ = ["cli", "load_application_yaml", "compute_helm_args", "render_manifests"]

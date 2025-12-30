@@ -1,8 +1,8 @@
 """Reference mapping utilities."""
 
 from pathlib import Path
-from utils import log
-from git_helper import resolve_git_root
+from .utils import log
+from .git_helper import resolve_git_root
 
 
 def build_ref_mapping(ref_sources: dict, workdir: Path, ref_map_override: dict = None, verbose: bool = False) -> dict:
