@@ -11,11 +11,6 @@ def log(message: str, verbose: bool = False):
         print(message, file=sys.stderr)
 
 
-def is_oci_registry(repo_url: str) -> bool:
-    """Check if the repository URL is an OCI registry."""
-    return not repo_url.startswith(("http://", "https://"))
-
-
 def get_repo_name_from_url(repo_url: str) -> str:
     """
     Extract repository name from Helm repo URL.

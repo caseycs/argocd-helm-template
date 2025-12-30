@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 import yaml
 from argocd_application import ArgocdApplication
-from utils import log, is_oci_registry, get_repo_name_from_url
+from utils import log, get_repo_name_from_url
 from repo_manager import ensure_repo_added
 from git_helper import clone_or_update_git_repo, checkout_git_revision
 

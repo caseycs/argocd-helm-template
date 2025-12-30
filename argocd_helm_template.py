@@ -11,7 +11,6 @@ ArgoCD Helm Template - Render Helm charts from ArgoCD applications.
 Supports rendering Kubernetes manifests from ArgoCD application definitions.
 """
 
-import sys
 from pathlib import Path
 import yaml
 import click
