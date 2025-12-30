@@ -8,16 +8,19 @@
 
 """
 ArgoCD Helm Template - Render Helm charts from ArgoCD applications.
-Supports both regular rendering and git-aware diffing of manifests.
+Supports rendering Kubernetes manifests from ArgoCD application definitions.
 """
 
-import base64
-import subprocess
 import sys
 from pathlib import Path
 import yaml
-import shutil
 import click
+
+from argocd_application import ArgocdApplication
+from utils import log
+from chart_manager import download_chart
+from helm_executor import run_helm_template
+from ref_mapper import build_ref_mapping, apply_ref_mapping_to_value_files
 
 __version__ = "0.1.0"
 
@@ -33,699 +36,24 @@ class KeyValueParamType(click.ParamType):
         return (key.strip(), val.strip())
 
 
-def log(message: str, verbose: bool = False):
-    """Print message only if verbose mode is enabled."""
-    if verbose:
-        print(message, file=sys.stderr)
+def load_application_yaml(path: Path = Path("application.yaml")) -> ArgocdApplication:
+    """
+    Load and parse the application.yaml file.
 
+    Returns:
+        ArgocdApplication: Validated ArgoCD application instance
 
-def load_application_yaml(path: Path = Path("application.yaml")) -> dict:
-    """Load and parse the application.yaml file."""
+    Raises:
+        ValueError: If application.yaml is invalid
+    """
     with open(path) as f:
-        return yaml.safe_load(f)
+        yaml_dict = yaml.safe_load(f)
+    return ArgocdApplication(yaml_dict)
 
 
-def extract_chart_info(app_yaml: dict) -> tuple[str, str, str, bool]:
+def compute_helm_args(app: ArgocdApplication, workdir: Path, ref_map_override: dict = None, verbose: bool = False) -> list[str]:
     """
-    Extract chart repository, name, version, and chart type from application.yaml.
-
-    Returns:
-        tuple: (repo_url, chart_name, version, is_git_chart)
-    """
-    sources = app_yaml.get("spec", {}).get("sources", [])
-
-    # Find the source with chart info (helm chart or git-based chart)
-    for source in sources:
-        if "chart" in source:
-            # Traditional Helm chart repository
-            repo_url = source.get("repoURL", "")
-            chart_name = source.get("chart", "")
-            version = source.get("targetRevision", "").lstrip("v")
-            return repo_url, chart_name, version, False
-        elif "path" in source:
-            # Git-based chart
-            repo_url = source.get("repoURL", "")
-            chart_path = source.get("path", "")
-            version = source.get("targetRevision", "")
-            return repo_url, chart_path, version, True
-
-    raise ValueError("Could not find chart information in application.yaml")
-
-
-def extract_helm_config(app_yaml: dict) -> dict:
-    """
-    Extract helm configuration from application.yaml sources section.
-
-    Returns:
-        dict: Helm configuration (e.g., {releaseName: "custom-name", skipCrds: True})
-    """
-    sources = app_yaml.get("spec", {}).get("sources", [])
-
-    # Find the source with helm config
-    for source in sources:
-        if "helm" in source:
-            return source.get("helm", {})
-
-    return {}
-
-
-def extract_ref_sources(app_yaml: dict) -> dict:
-    """
-    Extract all sources with 'ref' field as a mapping: ref_name -> repoURL.
-
-    Ignores targetRevision and only includes sources with ref field defined.
-
-    Returns:
-        dict: Mapping of ref names to repository URLs (e.g., {"values": "https://github.com/org/repo"})
-    """
-    sources = app_yaml.get("spec", {}).get("sources", [])
-    ref_sources = {}
-
-    for source in sources:
-        if "ref" in source:
-            ref_name = source.get("ref")
-            repo_url = source.get("repoURL", "")
-            if ref_name and repo_url:
-                ref_sources[ref_name] = repo_url
-
-    return ref_sources
-
-
-def is_oci_registry(repo_url: str) -> bool:
-    """Check if the repository URL is an OCI registry."""
-    return not repo_url.startswith(("http://", "https://"))
-
-
-def get_repo_name_from_url(repo_url: str) -> str:
-    """
-    Extract repository name from Helm repo URL.
-    For https://prometheus-community.github.io/helm-charts, return 'prometheus-community.github.io-helm-charts'
-    For https://grafana.github.io/helm-charts, return 'grafana.github.io-helm-charts'
-    """
-    # Remove http:// or https:// prefix
-    if repo_url.startswith("https://"):
-        repo_name = repo_url[8:]  # Remove 'https://'
-    elif repo_url.startswith("http://"):
-        repo_name = repo_url[7:]  # Remove 'http://'
-    else:
-        repo_name = repo_url
-
-    # Replace slashes with dashes
-    repo_name = repo_name.replace("/", "-")
-
-    # Remove trailing dash if present
-    repo_name = repo_name.rstrip("-")
-
-    return repo_name
-
-
-def get_git_cache_dir(repo_url: str, workdir: Path) -> Path:
-    """Get the cache directory path for a Git repository in .chart_repo within the working directory."""
-    cache_root = workdir / ".chart_repo"
-    repo_name = get_repo_name_from_url(repo_url)
-    return cache_root / repo_name
-
-
-def clone_or_update_git_repo(repo_url: str, workdir: Path, verbose: bool = False) -> Path:
-    """
-    Clone a Git repository in the cache directory if it doesn't exist.
-
-    Returns:
-        Path to the cached repository
-    """
-    cache_dir = get_git_cache_dir(repo_url, workdir)
-
-    if not cache_dir.exists():
-        # Clone new repo
-        log(f"Cloning repository from {repo_url} to {cache_dir}...", verbose)
-        cache_dir.parent.mkdir(parents=True, exist_ok=True)
-        cmd = ["git", "clone", repo_url, str(cache_dir)]
-        log(f"Running: {' '.join(cmd)}", verbose)
-        subprocess.run(cmd, check=True, capture_output=True)
-    else:
-        log(f"Using cached repository at {cache_dir}", verbose)
-
-    return cache_dir
-
-
-def checkout_git_revision(repo_path: Path, revision: str, verbose: bool = False):
-    """
-    Checkout a specific revision (branch/tag) in a Git repository.
-
-    If the revision is not available locally, fetches from origin and retries.
-    """
-    log(f"Checking out {revision} in {repo_path}...", verbose)
-    cmd = ["git", "-C", str(repo_path), "checkout", revision]
-    log(f"Running: {' '.join(cmd)}", verbose)
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        # Revision not found locally, try fetching and retrying
-        log(f"Revision {revision} not found locally, fetching from origin...", verbose)
-        fetch_cmd = ["git", "-C", str(repo_path), "fetch", "origin"]
-        log(f"Running: {' '.join(fetch_cmd)}", verbose)
-        fetch_result = subprocess.run(fetch_cmd, capture_output=True, text=True)
-
-        if fetch_result.returncode != 0:
-            raise RuntimeError(f"Failed to fetch from origin: {fetch_result.stderr}")
-
-        # Retry checkout after fetch
-        log(f"Retrying checkout of {revision} after fetch...", verbose)
-        log(f"Running: {' '.join(cmd)}", verbose)
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to checkout {revision} even after fetch: {result.stderr}")
-
-
-def apply_ref_mapping_to_value_files(value_files: list[str], ref_mapping: dict, verbose: bool = False) -> list[Path]:
-    """
-    Apply ref mapping to valueFiles, replacing $ref_name/ prefixes with mapped paths.
-
-    Args:
-        value_files: List of value file paths (may contain $ref_name/ prefixes)
-        ref_mapping: Mapping of ref names to local paths
-        verbose: Enable verbose logging
-
-    Returns:
-        list[Path]: List of resolved value file paths
-    """
-    resolved_files = []
-
-    for vf in value_files:
-        # Check if value file starts with $ref_name/
-        if vf.startswith("$"):
-            # Extract ref name and path
-            parts = vf[1:].split("/", 1)
-            if len(parts) == 2:
-                ref_name, relative_path = parts
-                if ref_name in ref_mapping:
-                    resolved_path = ref_mapping[ref_name] / relative_path
-                    log(f"Mapped valueFile: {vf} -> {resolved_path}", verbose)
-                    resolved_files.append(resolved_path)
-                else:
-                    raise RuntimeError(f"Error: Ref '{ref_name}' in valueFile '{vf}' not found in mapping")
-            else:
-                raise RuntimeError(f"Error: valueFile '{vf}', ref/path expected but not found")
-        else:
-            raise RuntimeError(f"Error: valueFile '{vf}', should start with mapping")
-
-    return resolved_files
-
-
-def build_ref_mapping(ref_sources: dict, workdir: Path, ref_map_override: dict = None, verbose: bool = False) -> dict:
-    """
-    Build a mapping from ref names to local paths.
-
-    Priority:
-    1. If ref_map_override is provided, use those mappings
-    2. For the first ref source, use git root
-    3. If there are more ref sources and no mapping provided, fail with error
-
-    Returns:
-        dict: Mapping of ref names to local paths (e.g., {"values": Path("/git/root")})
-
-    Raises:
-        RuntimeError: If multiple ref sources exist without mapping
-    """
-    if not ref_sources:
-        return {}
-
-    ref_mapping = {}
-
-    if ref_map_override:
-        # Parse and apply override mappings
-        for ref_name, local_path in ref_map_override.items():
-            ref_mapping[ref_name] = Path(local_path)
-            log(f"Ref mapping override: {ref_name} -> {local_path}", verbose)
-    else:
-        # For the first ref source, use git root
-        first_ref_name = next(iter(ref_sources.keys()))
-        if len(ref_sources) > 1:
-            raise RuntimeError(
-                f"Error: Multiple ref sources found ({', '.join(ref_sources.keys())}) but no --ref-map provided. "
-                "Please specify --ref-map to map each ref to a local path (e.g., --ref-map values=/path/to/values --ref-map other=/path/to/other)"
-            )
-
-        git_root = resolve_git_root(workdir, verbose)
-        ref_mapping[first_ref_name] = git_root
-        log(f"Ref mapping: {first_ref_name} -> {git_root}", verbose)
-
-    return ref_mapping
-
-
-def resolve_git_root(workdir: Path, verbose: bool = False) -> Path:
-    """
-    Resolve the git repository root path from the working directory.
-
-    Checks if workdir is part of a git repository and returns the git root.
-
-    Returns:
-        Path to the git repository root
-
-    Raises:
-        RuntimeError: If workdir is not in a git repository
-    """
-    git_check = subprocess.run(
-        ["git", "-C", str(workdir), "rev-parse", "--git-dir"],
-        capture_output=True,
-        text=True
-    )
-
-    if git_check.returncode != 0:
-        raise RuntimeError(
-            f"Error: Working directory {workdir} is not in a git repository. "
-            "Cannot determine git root for ref sources."
-        )
-
-    git_dir = git_check.stdout.strip()
-    if git_dir == ".git":
-        log(f"Git root: {workdir}", verbose)
-        return workdir
-    else:
-        # git_dir is a relative or absolute path to .git
-        git_root = (workdir / git_dir).resolve().parent if not Path(git_dir).is_absolute() else Path(git_dir).parent
-        log(f"Git root: {git_root}", verbose)
-        return git_root
-
-
-def is_repo_added(repo_name: str, verbose: bool = False) -> bool:
-    """Check if Helm repository is already added."""
-    result = subprocess.run(
-        ["helm", "repo", "list", "-o", "json"],
-        capture_output=True,
-        text=True
-    )
-
-    if result.returncode != 0:
-        # If helm repo list fails, assume no repos are added
-        return False
-
-    try:
-        repos = yaml.safe_load(result.stdout) or []
-        return any(repo.get("name") == repo_name for repo in repos)
-    except:
-        return False
-
-
-def ensure_repo_added(repo_name: str, repo_url: str, verbose: bool = False):
-    """Ensure Helm repository is added and updated."""
-    if not is_repo_added(repo_name, verbose):
-        log(f"Adding Helm repository {repo_name}...", verbose)
-        cmd = ["helm", "repo", "add", repo_name, repo_url]
-        log(f"Running: {' '.join(cmd)}", verbose)
-
-        if verbose:
-            subprocess.run(cmd, check=True)
-        else:
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    else:
-        log(f"Helm repository {repo_name} already added", verbose)
-
-    # Update repo to get latest chart info
-    log(f"Updating Helm repository {repo_name}...", verbose)
-    cmd = ["helm", "repo", "update", repo_name]
-    log(f"Running: {' '.join(cmd)}", verbose)
-
-    if verbose:
-        subprocess.run(cmd, check=True)
-    else:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-def should_download_chart(chart_dir: Path, chart_name: str, version: str, is_git: bool = False) -> bool:
-    """
-    Check if chart needs to be downloaded.
-
-    Returns True if:
-    - Chart directory doesn't exist
-    - Chart.yaml version doesn't match expected version (for Helm charts only)
-
-    For Git charts, always returns True to force re-copy on each run
-    (Git checkout will be a no-op if revision is already checked out)
-    """
-    if is_git:
-        # For Git charts, always return True to ensure we re-copy from latest checkout
-        return True
-
-    chart_path = chart_dir / chart_name
-    chart_yaml = chart_path / "Chart.yaml"
-
-    if not chart_path.exists() or not chart_yaml.exists():
-        return True
-
-    # Check version in Chart.yaml
-    with open(chart_yaml) as f:
-        chart_metadata = yaml.safe_load(f)
-        current_version = chart_metadata.get("version", "").lstrip("v")
-        return current_version != version
-
-
-def _symlink_git_chart(repo_path: Path, chart_path: str, chart_dir: Path, verbose: bool = False):
-    """Create a symlink from the chart directory to the Git repository chart."""
-    # Remove entire .chart directory to ensure clean state
-    if chart_dir.exists():
-        log(f"Removing existing .chart directory at {chart_dir}", verbose)
-        shutil.rmtree(chart_dir)
-
-    # Create fresh .chart directory
-    chart_dir.mkdir(parents=True, exist_ok=True)
-
-    # Source path in the Git repo
-    source_chart_path = repo_path / chart_path
-
-    if not source_chart_path.exists():
-        raise FileNotFoundError(f"Chart not found at {source_chart_path}")
-
-    # Get the chart directory name (last component of the path)
-    chart_dir_name = source_chart_path.name
-
-    # Destination symlink path in the .chart directory
-    dest_chart_path = chart_dir / chart_dir_name
-
-    log(f"Creating symlink from {dest_chart_path} to {source_chart_path}", verbose)
-    dest_chart_path.symlink_to(source_chart_path)
-
-
-def _download_chart_impl(repo_url: str, chart_name: str, version: str, chart_dir: Path, is_oci: bool = False, verbose: bool = False):
-    """Raw download implementation using helm pull."""
-    # Remove entire .chart directory to ensure clean state
-    if chart_dir.exists():
-        log(f"Removing existing .chart directory at {chart_dir}", verbose)
-        shutil.rmtree(chart_dir)
-
-    # Create fresh .chart directory
-    chart_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build chart reference based on type
-    if is_oci:
-        chart_ref = f"oci://{repo_url}/{chart_name}"
-    else:
-        chart_ref = f"{repo_url}/{chart_name}"
-
-    cmd = [
-        "helm", "pull",
-        chart_ref,
-        "--version", version,
-        "--untar",
-        "--destination", str(chart_dir)
-    ]
-
-    log(f"Running: {' '.join(cmd)}", verbose)
-
-    if verbose:
-        subprocess.run(cmd, check=True)
-    else:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-def check_git_repo(workdir: Path, verbose: bool = False) -> bool:
-    """Check if the working directory is part of a git repository."""
-    cmd = ["git", "-C", str(workdir), "rev-parse", "--git-dir"]
-    log(f"Running: {' '.join(cmd)}", verbose)
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True
-    )
-    return result.returncode == 0
-
-
-def check_file_changes(workdir: Path, files: list[str], verbose: bool = False) -> bool:
-    """
-    Check if any of the given files have uncommitted changes.
-
-    Returns True if any file has changes (both staged and unstaged).
-    """
-    cmd = ["git", "-C", str(workdir), "diff", "--name-only"] + files
-    log(f"Running: {' '.join(cmd)}", verbose)
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True
-    )
-
-    if result.returncode != 0:
-        return False
-
-    # Also check for staged changes
-    staged_cmd = ["git", "-C", str(workdir), "diff", "--cached", "--name-only"] + files
-    log(f"Running: {' '.join(staged_cmd)}", verbose)
-    staged_result = subprocess.run(
-        staged_cmd,
-        capture_output=True,
-        text=True
-    )
-
-    # Return True if either unstaged or staged changes exist
-    return bool(result.stdout.strip() or (staged_result.returncode == 0 and staged_result.stdout.strip()))
-
-
-def extract_git_file(workdir: Path, filepath: str, dest: Path, git_ref: str = "HEAD", verbose: bool = False):
-    """
-    Extract a file from a git reference and write to destination.
-
-    Raises an exception if the file doesn't exist in git or if git command fails.
-    """
-    cmd = ["git", "-C", str(workdir), "show", f"{git_ref}:./{filepath}"]
-    log(f"Running: {' '.join(cmd)}", verbose)
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True
-    )
-
-    if result.returncode != 0:
-        raise RuntimeError(f"Failed to extract {filepath} from git: {result.stderr}")
-
-    # Ensure parent directory exists
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(dest, "w") as f:
-        f.write(result.stdout)
-
-
-def download_chart(repo_url: str, chart_name: str, version: str, chart_dir: Path, workdir: Path, is_git: bool = False, verbose: bool = False):
-    """Wrapper that checks if download is needed and downloads chart."""
-    if not should_download_chart(chart_dir, chart_name, version, is_git):
-        log(f"Chart {chart_name}:{version} already exists in {chart_dir}", verbose)
-        return
-
-    if is_git:
-        # Handle Git-based chart
-        log(f"Downloading chart {chart_name} from Git revision {version}...", verbose)
-        repo_path = clone_or_update_git_repo(repo_url, workdir, verbose)
-        checkout_git_revision(repo_path, version, verbose)
-        _symlink_git_chart(repo_path, chart_name, chart_dir, verbose)
-    else:
-        # Handle Helm registry chart (traditional or OCI)
-        is_oci = is_oci_registry(repo_url)
-
-        # Ensure repo is added for non-OCI registries
-        if not is_oci:
-            repo_name = get_repo_name_from_url(repo_url)
-            ensure_repo_added(repo_name, repo_url, verbose)
-
-        # Determine chart reference based on registry type
-        if is_oci:
-            chart_ref = repo_url
-        else:
-            chart_ref = get_repo_name_from_url(repo_url)
-
-        log(f"Downloading chart {chart_name}:{version}...", verbose)
-        _download_chart_impl(chart_ref, chart_name, version, chart_dir, is_oci, verbose)
-
-
-class LiteralString(str):
-    """String subclass to mark strings that should use literal block scalar style."""
-    pass
-
-
-def represent_literal_str(dumper, data):
-    """Custom YAML representer for LiteralString to use literal block scalar style."""
-    return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
-
-
-def represent_str(dumper, data):
-    """Custom YAML representer for regular strings to preserve multiline formatting."""
-    if '\n' in data:
-        return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
-    return dumper.represent_scalar('tag:yaml.org,2002:str', data)
-
-
-def process_secrets(yaml_output: str, secrets: bool = False, verbose: bool = False) -> str:
-    """
-    Post-process helm template output to decode base64 values in Secrets.
-
-    Args:
-        yaml_output: Raw YAML output from helm template
-        secrets: Whether to decode base64 values in Secrets
-        verbose: Enable verbose logging
-
-    Returns:
-        Processed YAML output with decoded Secret values (if secrets=True)
-    """
-    # If not decoding secrets, return original output
-    if not secrets:
-        return yaml_output
-
-    # Load all YAML documents using native yaml.safe_load_all
-    documents = []
-    try:
-        for doc in yaml.safe_load_all(yaml_output):
-            if doc is None:
-                continue
-
-            # Process Secrets
-            if isinstance(doc, dict) and doc.get('kind') == 'Secret':
-                log(f"Processing Secret: {doc.get('metadata', {}).get('name', 'unknown')}", verbose)
-
-                # Decode data section
-                if 'data' in doc and isinstance(doc['data'], dict):
-                    for key, value in doc['data'].items():
-                        if isinstance(value, str):
-                            try:
-                                decoded = base64.b64decode(value).decode('utf-8')
-                                # Wrap in LiteralString to force literal block scalar style
-                                doc['data'][key] = LiteralString(decoded)
-                                log(f"  Decoded key: {key}", verbose)
-                            except Exception as e:
-                                log(f"  Failed to decode key {key}: {e}", verbose)
-                                # Keep original value if decoding fails
-                                pass
-
-            documents.append(doc)
-    except yaml.YAMLError as e:
-        log(f"Warning: Failed to parse YAML: {e}", verbose)
-        return yaml_output  # Return original if parsing fails
-
-    # Create custom dumper with our representers
-    class CustomDumper(yaml.SafeDumper):
-        pass
-
-    CustomDumper.add_representer(LiteralString, represent_literal_str)
-    CustomDumper.add_representer(str, represent_str)
-
-    # Convert documents back to YAML
-    result_parts = []
-    for doc in documents:
-        result_parts.append(yaml.dump(
-            doc,
-            Dumper=CustomDumper,
-            default_flow_style=False,
-            sort_keys=False,
-            width=float("inf"),
-            allow_unicode=True
-        ))
-
-    return '---\n' + '\n---\n'.join(result_parts)
-
-
-def run_helm_template(chart_path: Path, version: str, extra_args: list[str], values_files: list[Path], output_dir: Path = Path("."), helm_config: dict = None, secrets: bool = False, verbose: bool = False, print_output: bool = True):
-    """Run helm template command and optionally post-process Secrets to decode base64 values."""
-    if helm_config is None:
-        helm_config = {}
-
-    # Build the helm template command
-    # Syntax: helm template [NAME] [CHART] [flags]
-    # NAME is optional (release name), CHART is the chart path
-    cmd = ["helm", "template"]
-
-    # Add release name as positional argument if specified in helm configuration
-    release_name = helm_config.get("releaseName", "")
-    if release_name:
-        cmd.append(release_name)
-
-    # Add chart path
-    cmd.append(str(chart_path))
-
-    # Add version flag
-    cmd.extend(["--version", f"v{version}"])
-
-    # Add all values files
-    for values_file in values_files:
-        cmd.extend(["-f", str(values_file)])
-
-    # Add skipCrds flag if specified in helm configuration
-    if helm_config.get("skipCrds", False):
-        cmd.append("--skip-crds")
-
-    cmd.extend(extra_args)
-
-    log(f"Running: {' '.join(cmd)}", verbose)
-
-    # Run helm template and capture output
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-
-    stdout_output, stderr_output = process.communicate()
-
-    if process.returncode != 0:
-        print(stderr_output, file=sys.stderr)
-        sys.exit(process.returncode)
-    elif verbose and stderr_output:
-        print(stderr_output, file=sys.stderr)
-
-    # Post-process to decode Secret values if requested
-    if secrets:
-        log("Post-processing Secrets to decode base64 values...", verbose)
-    processed_output = process_secrets(stdout_output, secrets, verbose)
-
-    # Determine output filename based on secrets flag
-    manifest_filename = ".manifest.secrets.yaml" if secrets else ".manifest.yaml"
-    manifest_path = output_dir / manifest_filename
-
-    # Write processed output to manifest file
-    with open(manifest_path, "w") as manifest_file:
-        manifest_file.write(processed_output)
-
-    # Print to stdout only if print_output is True
-    if print_output:
-        print(processed_output, end="")
-
-
-def prepare_values_files(app_yaml: dict, workdir: Path, ref_map_override: dict, verbose: bool = False) -> list[Path]:
-    """
-    Prepare values files: extract ref sources, build mapping, and resolve value file paths.
-
-    Args:
-        app_yaml: Loaded application.yaml as dictionary
-        workdir: Working directory
-        ref_map_override: Override mapping from --ref-map
-        verbose: Enable verbose logging
-
-    Returns:
-        list[Path]: List of resolved value file paths
-    """
-    ref_sources = extract_ref_sources(app_yaml)
-    helm_config = extract_helm_config(app_yaml)
-
-    # Build ref mapping
-    try:
-        ref_mapping = build_ref_mapping(ref_sources, workdir, ref_map_override, verbose)
-    except RuntimeError as e:
-        print(str(e), file=sys.stderr)
-        sys.exit(1)
-
-    # Process value files with ref mapping
-    values_files = []
-    if "valueFiles" in helm_config:
-        try:
-            values_files = apply_ref_mapping_to_value_files(helm_config["valueFiles"], ref_mapping, verbose)
-        except RuntimeError as e:
-            print(str(e), file=sys.stderr)
-            sys.exit(1)
-
-    return values_files
-
-
-def compute_helm_args(app_yaml: dict, workdir: Path, ref_map_override: dict = None, verbose: bool = False) -> list[str]:
-    """
-    Compute helm template command-line arguments from application.yaml.
+    Compute helm template command-line arguments from ArgocdApplication.
 
     Processes:
     - Helm parameters: releaseName (with fallback to metadata.name), skipCrds
@@ -734,33 +62,38 @@ def compute_helm_args(app_yaml: dict, workdir: Path, ref_map_override: dict = No
     - Value files: apply ref mapping and resolve paths
 
     Args:
-        app_yaml: Loaded application.yaml as dictionary
+        app: Validated ArgocdApplication instance
         workdir: Working directory
         ref_map_override: Optional mapping of ref names to local paths
         verbose: Enable verbose logging
 
     Returns:
         list[str]: Command-line arguments for helm template command.
-                   Includes release name (if present), -f arguments for values files,
+                   Includes release name, -f arguments for values files,
                    and --skip-crds flag (if enabled).
 
     Raises:
+        AssertionError: If ArgocdApplication is not validated
         click.ClickException: If mapping is incomplete or invalid
     """
-    # Extract helm configuration
-    helm_config = extract_helm_config(app_yaml)
+    # Internal check: application must be already validated
+    try:
+        app.validate()
+    except ValueError as e:
+        assert False, f"Validated ArgoCD application expected: {str(e)}"
 
     # Extract helm parameters: use releaseName from helm config, fallback to metadata.name
-    release_name = helm_config.get("releaseName") or app_yaml.get("metadata").get("name")
+    release_name = app.get_helm_release_name() or app.get_app_name()
 
     # Build arguments array, add release name
     args = ['--release-name', release_name]
+
     # Add skipCrds flag if enabled
-    if helm_config.get("skipCrds", False):
+    if app.get_helm_skip_crds():
         args.append("--skip-crds")
 
     # Extract ref sources and build mapping
-    ref_sources = extract_ref_sources(app_yaml)
+    ref_sources = app.get_all_ref_sources()
     ref_map_override = ref_map_override or {}
 
     # Build ref mapping
@@ -770,13 +103,15 @@ def compute_helm_args(app_yaml: dict, workdir: Path, ref_map_override: dict = No
         raise click.ClickException(str(e))
 
     # Process value files with ref mapping
+    value_files_list = app.get_helm_value_files()
     values_files = []
-    if "valueFiles" in helm_config:
+
+    if value_files_list:
         try:
-            values_files = apply_ref_mapping_to_value_files(helm_config["valueFiles"], ref_mapping, verbose)
+            values_files = apply_ref_mapping_to_value_files(value_files_list, ref_mapping, verbose)
         except RuntimeError as e:
             raise click.ClickException(str(e))
-        
+
     # Add values files
     for values_file in values_files:
         args.extend(["-f", str(values_file)])
@@ -784,183 +119,57 @@ def compute_helm_args(app_yaml: dict, workdir: Path, ref_map_override: dict = No
     return args
 
 
-def sort_yaml_file(file_path: Path, verbose: bool = False):
+def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path, output_dir: Path, extra_args: list[str], ref_map_override: dict = None, secrets: bool = False, verbose: bool = False, print_output: bool = True):
     """
-    Sort YAML file keys alphabetically.
-
-    Args:
-        file_path: Path to YAML file to sort
-        verbose: Enable verbose logging
-    """
-    log(f"Sorting {file_path}...", verbose)
-
-    # Load all YAML documents
-    with open(file_path) as f:
-        docs = list(yaml.safe_load_all(f))
-
-    # Write back with sorted keys
-    with open(file_path, "w") as f:
-        for i, doc in enumerate(docs):
-            if i > 0:
-                f.write("---\n")
-            yaml.dump(
-                doc,
-                f,
-                default_flow_style=False,
-                sort_keys=True,
-                allow_unicode=True,
-                width=float("inf")
-            )
-
-
-def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path, values_files: list[Path], output_dir: Path, extra_args: list[str], secrets: bool = False, verbose: bool = False, print_output: bool = True):
-    """
-    Load application.yaml, extract chart info, download chart, and render manifests.
+    Load application.yaml, validate, extract chart info, download chart, and render manifests.
 
     Args:
         workdir: Working directory
         chart_dir: Directory to download/store charts
         application_yaml_path: Path to application.yaml
-        values_files: List of paths to values files
         output_dir: Directory to write manifests to
         extra_args: Additional helm template arguments
+        ref_map_override: Optional mapping of ref names to local paths
         secrets: Whether to decode base64 in Secrets
         verbose: Enable verbose logging
         print_output: Whether to print output to stdout
     """
     log(f"Loading {application_yaml_path}...", verbose)
-    app_yaml = load_application_yaml(application_yaml_path)
+    app = load_application_yaml(application_yaml_path)
 
-    # Extract chart info
-    repo_url, chart_name, version, is_git_chart = extract_chart_info(app_yaml)
+    # Validate application
+    try:
+        app.validate()
+    except ValueError as e:
+        raise click.ClickException(f"Invalid application.yaml: {str(e)}")
+
+    # Log chart source info
+    chart_source = app.get_chart_source()
+    chart_name = chart_source.get("chart" if app.is_helm_repo() else "path", "")
+    repo_url = chart_source.get("repoURL", "")
+    version = chart_source.get("targetRevision", "").lstrip("v")
+    is_git_chart = app.is_helm_git()
+
     log(f"Chart: {chart_name}", verbose)
     log(f"Repository: {repo_url}", verbose)
     log(f"Version: {version}", verbose)
     log(f"Chart type: {'Git' if is_git_chart else 'Helm'}", verbose)
 
-    # Extract helm configuration (e.g., releaseName, skipCrds)
-    helm_config = extract_helm_config(app_yaml)
-    if helm_config:
-        log(f"Helm config: {helm_config}", verbose)
+    # Download chart if needed and get the chart path
+    chart_path = download_chart(app, chart_dir, workdir, verbose)
 
-    # Download chart if needed
-    download_chart(repo_url, chart_name, version, chart_dir, workdir, is_git_chart, verbose)
+    # Compute helm arguments (includes release name, values files, skipCrds)
+    helm_args = compute_helm_args(app, workdir, ref_map_override, verbose)
+
+    # Merge with extra_args
+    helm_args.extend(extra_args)
 
     # Run helm template
-    # For Git charts, chart_name is a path (e.g., "charts/argo-cd"), so get the last component
-    # For Helm charts, chart_name is just the chart name
-    actual_chart_dir_name = Path(chart_name).name if is_git_chart else chart_name
-    chart_path = chart_dir / actual_chart_dir_name
     log("Running helm template...", verbose)
-    run_helm_template(chart_path, version, extra_args, values_files, output_dir, helm_config, secrets, verbose, print_output)
+    run_helm_template(chart_path, helm_args, output_dir, secrets, verbose, print_output)
 
     manifest_file = ".manifest.secrets.yaml" if secrets else ".manifest.yaml"
     log(f"Output written to {output_dir / manifest_file}", verbose)
-
-
-def diff_mode(workdir: Path, chart_dir: Path, diff_ref: str, application_file: str, extra_args: list[str], ref_map_override: dict = None, secrets: bool = False, verbose: bool = False, sort: bool = False):
-    """
-    Generate manifests from both git-committed and current state of application file and values.yaml.
-
-    Args:
-        workdir: Working directory
-        chart_dir: Directory for charts
-        diff_ref: Git reference to diff against (default: HEAD, can be origin/main, --cached, etc.)
-        application_file: Application YAML filename
-        extra_args: Additional helm template arguments
-        ref_map_override: Optional mapping of ref names to local paths
-        secrets: Whether to decode base64 in Secrets
-        verbose: Enable verbose logging
-        sort: Sort YAML keys alphabetically before showing diff
-    """
-    # 1. Check if git repo
-    if not check_git_repo(workdir, verbose):
-        print("Error: Working directory is not part of a git repository", file=sys.stderr)
-        sys.exit(1)
-
-    log("Verified workdir is in a git repository", verbose)
-
-    # 2. Check for changes
-    if not check_file_changes(workdir, [application_file], verbose):
-        print(f"Error: No changes detected in {application_file}", file=sys.stderr)
-        sys.exit(1)
-
-    log(f"Detected changes in {application_file}", verbose)
-
-    # 3. Create .diff directory
-    diff_dir = workdir / ".diff"
-    if diff_dir.exists():
-        log(f"Removing existing .diff directory at {diff_dir}", verbose)
-        shutil.rmtree(diff_dir)
-    diff_dir.mkdir(parents=True, exist_ok=True)
-    log(f"Created .diff directory at {diff_dir}", verbose)
-
-    # 4. Extract original application file from git
-    try:
-        log(f"Extracting {application_file} from git {diff_ref}...", verbose)
-        extract_git_file(workdir, application_file, diff_dir / application_file, diff_ref, verbose)
-    except Exception as e:
-        print(f"Error: Could not extract {application_file} from git: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    log("Successfully extracted files from git", verbose)
-
-    # 5. Load both original and current application files
-    try:
-        original_app_yaml = load_application_yaml(diff_dir / application_file, verbose)
-        current_app_yaml = load_application_yaml(workdir / application_file, verbose)
-    except Exception as e:
-        print(f"Error: Could not load application files: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # 6. Prepare values files for both versions
-    try:
-        original_values_files = prepare_values_files(original_app_yaml, workdir, ref_map_override or {}, verbose)
-        current_values_files = prepare_values_files(current_app_yaml, workdir, ref_map_override or {}, verbose)
-    except Exception as e:
-        print(f"Error: Could not prepare values files: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # 7. Render original manifests (from .diff/)
-    log("Rendering manifests from original (committed) files...", verbose)
-    render_manifests(
-        workdir=workdir,
-        chart_dir=chart_dir,
-        application_yaml_path=diff_dir / application_file,
-        values_files=original_values_files,
-        output_dir=diff_dir,
-        extra_args=extra_args,
-        secrets=secrets,
-        verbose=verbose,
-        print_output=False
-    )
-
-    # 8. Render current manifests (to ./)
-    log("Rendering manifests from current files...", verbose)
-    render_manifests(
-        workdir=workdir,
-        chart_dir=chart_dir,
-        application_yaml_path=workdir / application_file,
-        values_files=current_values_files,
-        output_dir=workdir,
-        extra_args=extra_args,
-        secrets=secrets,
-        verbose=verbose,
-        print_output=False
-    )
-
-    # Sort manifests if requested
-    if sort:
-        log("Sorting YAML keys in manifest files before diff...", verbose)
-        sort_yaml_file(diff_dir / ".manifest.yaml", verbose)
-        sort_yaml_file(workdir / ".manifest.yaml", verbose)
-
-    log(f"Diff complete (comparing against {diff_ref}). Showing diff...", verbose)
-
-    # Execute git diff in interactive mode to show differences
-    diff_cmd = ["git", "diff", "--no-index", "--", str(diff_dir / ".manifest.yaml"), str(workdir / ".manifest.yaml")]
-    log(f"Running: {' '.join(diff_cmd)}", verbose)
-    subprocess.run(diff_cmd)
 
 
 @click.group()
@@ -1030,12 +239,6 @@ def render(ctx, workdir, application, chart_dir, verbose, secrets, ref_map):
 
     log(f"Working directory: {workdir}", verbose)
 
-    # Normal mode - continue with standard template generation
-    application_yaml_path = workdir / application
-    output_dir = workdir
-
-    log(f"Application YAML: {application_yaml_path}", verbose)
-
     # Convert ref_map tuple to dictionary
     ref_map_override = {}
     if ref_map:
@@ -1043,94 +246,23 @@ def render(ctx, workdir, application, chart_dir, verbose, secrets, ref_map):
             ref_map_override[ref_name] = local_path
             log(f"Ref map parameter: {ref_name} -> {local_path}", verbose)
 
-    # Load and prepare values files
-    app_yaml = load_application_yaml(application_yaml_path)
-    values_files = prepare_values_files(app_yaml, workdir, ref_map_override, verbose)
-
     # Render manifests using common function
+    application_yaml_path = workdir / application
+    output_dir = workdir
+
+    log(f"Application YAML: {application_yaml_path}", verbose)
+
     render_manifests(
         workdir=workdir,
         chart_dir=chart_dir,
         application_yaml_path=application_yaml_path,
-        values_files=values_files,
         output_dir=output_dir,
         extra_args=extra_args,
+        ref_map_override=ref_map_override,
         secrets=secrets,
         verbose=verbose,
         print_output=True
     )
-
-
-@cli.command(context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
-@click.argument('ref', default='HEAD', required=False)
-@click.option(
-    '--workdir',
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default=None,
-    help='Working directory containing application file and values.yaml (default: current directory)'
-)
-@click.option(
-    '--application',
-    default='application.yaml',
-    help='Application YAML filename (default: application.yaml)'
-)
-@click.option(
-    '--chart-dir',
-    type=click.Path(file_okay=False, path_type=Path),
-    default=None,
-    help='Directory to download charts to (default: .chart)'
-)
-@click.option(
-    '--verbose',
-    is_flag=True,
-    help='Enable verbose output'
-)
-@click.option(
-    '--secrets',
-    is_flag=True,
-    help='Decode base64 values in Secret resources'
-)
-@click.option(
-    '--sort',
-    is_flag=True,
-    help='Sort YAML keys alphabetically before showing diff'
-)
-@click.option(
-    '--ref-map',
-    multiple=True,
-    type=KeyValueParamType(),
-    help='Map repository refs to local paths (e.g., --ref-map values=/path/to/local)'
-)
-@click.pass_context
-def diff(ctx, ref, workdir, application, chart_dir, verbose, secrets, sort, ref_map):
-    """Compare manifests against a git reference.
-
-    REF is the git reference to compare against (default: HEAD).
-    Common values: HEAD, origin/main, --cached
-
-    Any additional arguments are passed through to 'helm template'.
-
-    Examples:
-
-      uv run argocd_helm_template.py diff
-
-      uv run argocd_helm_template.py diff origin/main
-
-      uv run argocd_helm_template.py diff --sort --verbose
-    """
-    extra_args = list(ctx.args)
-
-    # Resolve paths
-    workdir = workdir.resolve() if workdir else Path.cwd()
-    chart_dir = chart_dir.resolve() if chart_dir else workdir / ".chart"
-
-    log(f"Working directory: {workdir}", verbose)
-
-    # Convert ref_map tuples to dictionary
-    ref_map_dict = dict(ref_map) if ref_map else {}
-
-    # Call diff_mode (existing logic)
-    diff_mode(workdir, chart_dir, ref, application, extra_args, ref_map_dict, secrets, verbose, sort)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,12 @@ def cleanup_chart_cache():
         Path(__file__).parent / "chart-oci",
         Path(__file__).parent / "chart-https",
         Path(__file__).parent / "chart-git",
+        Path(__file__).parent / "crds-present",
+        Path(__file__).parent / "crds-skip",
+        Path(__file__).parent / "multiple-values",
+        Path(__file__).parent / "release-name",
+        Path(__file__).parent / "values-filename",
+        Path(__file__).parent / "without-values",
     ]
 
     # Clean up before test
