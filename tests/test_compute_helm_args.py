@@ -9,7 +9,7 @@ import yaml
 # Add parent directory to path to import the main module
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from argocd_helm_template import compute_helm_args
+from argocd_helm_template.helm_helper import compute_helm_args
 from argocd_helm_template.argocd_application import ArgocdApplication
 import click
 
@@ -66,7 +66,7 @@ def compute_helm_args_with_validation(yaml_string: str, workdir: Path, ref_map_o
     # Call compute_helm_args with validated application
     try:
         return compute_helm_args(app, workdir, ref_map_override, verbose)
-    except click.ClickException as e:
+    except (click.ClickException, RuntimeError) as e:
         raise ApplicationValidationError(str(e))
 
 

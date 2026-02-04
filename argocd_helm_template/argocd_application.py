@@ -6,7 +6,9 @@ This is a design document. The class is not yet integrated into the main code.
 Raw YAML data is never exposed directly to clients.
 """
 
+from pathlib import Path
 from typing import Optional
+import yaml
 
 
 class ArgocdApplication:
@@ -417,3 +419,23 @@ class ArgocdApplication:
             f"type={chart_type}, "
             f"has_helm_config={self.has_helm_config()})"
         )
+
+    @staticmethod
+    def load(path: Path) -> "ArgocdApplication":
+        """
+        Load and parse an ArgoCD application YAML file.
+
+        Args:
+            path: Path to the application.yaml file
+
+        Returns:
+            ArgocdApplication instance
+
+        Raises:
+            FileNotFoundError: If the file doesn't exist
+            yaml.YAMLError: If the file is not valid YAML
+            ValueError: If the YAML structure is invalid for ArgoCD application
+        """
+        with open(path) as f:
+            yaml_dict = yaml.safe_load(f)
+        return ArgocdApplication(yaml_dict)
