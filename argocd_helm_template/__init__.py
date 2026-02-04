@@ -220,7 +220,7 @@ def render(ctx, workdir, application, chart_dir, verbose, secrets, ref_map):
 
       argocd-helm-template render --verbose --secrets
 
-      argocd-helm-template render --namespace myapp
+      argocd-helm-template render --skip-crds --namespace myapp --release-name myrelese
     """
     extra_args = list(ctx.args)
 
