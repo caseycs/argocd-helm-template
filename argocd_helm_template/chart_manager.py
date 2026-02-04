@@ -1,11 +1,10 @@
 """Chart downloading and management utilities."""
 
-import subprocess
 import shutil
 from pathlib import Path
 import yaml
 from .argocd_application import ArgocdApplication
-from .utils import log, get_helm_repo_name_from_url
+from .utils import log, get_helm_repo_name_from_url, run_command
 from .repo_manager import ensure_helm_repo_added
 from .git_helper import clone_or_update_git_repo, checkout_git_revision
 
@@ -163,12 +162,7 @@ def _download_helm_chart_impl(repo_url: str, chart_name: str, version: str, char
         "--destination", str(chart_dir)
     ]
 
-    log(f"Running: {' '.join(cmd)}", verbose)
-
-    if verbose:
-        subprocess.run(cmd, check=True)
-    else:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    run_command(cmd, verbose=verbose)
 
 
 def download_helm_chart(app: ArgocdApplication, chart_dir: Path, workdir: Path, verbose: bool = False) -> Path:

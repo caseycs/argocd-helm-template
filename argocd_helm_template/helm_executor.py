@@ -128,7 +128,13 @@ def run_helm_template(chart_path: Path, helm_args: list[str], output_dir: Path =
     stdout_output, stderr_output = process.communicate()
 
     if process.returncode != 0:
-        raise RuntimeError(f"Helm template execution failed with exit code {process.returncode}:\n{stderr_output}")
+        # Show both stdout and stderr on error
+        error_parts = [f"Helm template execution failed with exit code {process.returncode}:"]
+        if stdout_output:
+            error_parts.append(f"stdout:\n{stdout_output}")
+        if stderr_output:
+            error_parts.append(f"stderr:\n{stderr_output}")
+        raise RuntimeError("\n".join(error_parts))
     elif verbose and stderr_output:
         log(stderr_output, verbose)
 

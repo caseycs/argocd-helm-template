@@ -1,20 +1,19 @@
 """Helm repository management functions."""
 
-import subprocess
 import yaml
-from .utils import log, get_helm_repo_name_from_url
+from .utils import log, run_command, CommandError
 
 
 def is_repo_added(repo_name: str, verbose: bool = False) -> bool:
     """Check if Helm repository is already added."""
-    result = subprocess.run(
-        ["helm", "repo", "list", "-o", "json"],
-        capture_output=True,
-        text=True
-    )
+    cmd = ["helm", "repo", "list", "-o", "json"]
+    try:
+        result = run_command(cmd, verbose=verbose, check=False)
+    except CommandError:
+        # If helm repo list fails, assume no repos are added
+        return False
 
     if result.returncode != 0:
-        # If helm repo list fails, assume no repos are added
         return False
 
     try:
@@ -29,21 +28,11 @@ def ensure_helm_repo_added(repo_name: str, repo_url: str, verbose: bool = False)
     if not is_repo_added(repo_name, verbose):
         log(f"Adding Helm repository {repo_name}...", verbose)
         cmd = ["helm", "repo", "add", repo_name, repo_url]
-        log(f"Running: {' '.join(cmd)}", verbose)
-
-        if verbose:
-            subprocess.run(cmd, check=True)
-        else:
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        run_command(cmd, verbose=verbose)
     else:
         log(f"Helm repository {repo_name} already added", verbose)
 
     # Update repo to get latest chart info
     log(f"Updating Helm repository {repo_name}...", verbose)
     cmd = ["helm", "repo", "update", repo_name]
-    log(f"Running: {' '.join(cmd)}", verbose)
-
-    if verbose:
-        subprocess.run(cmd, check=True)
-    else:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    run_command(cmd, verbose=verbose)
