@@ -125,7 +125,7 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
         verbose: Enable verbose logging
         print_output: Whether to print output to stdout
     """
-    log(f"Loading {application_yaml_path}...", verbose)
+    log(f"Loading {application_yaml_path}...")
     app = load_application_yaml(application_yaml_path)
 
     # Validate application
@@ -141,10 +141,10 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
     version = chart_source.get("targetRevision", "").lstrip("v")
     is_git_chart = app.is_helm_git()
 
-    log(f"Chart: {chart_name}", verbose)
-    log(f"Repository: {repo_url}", verbose)
-    log(f"Version: {version}", verbose)
-    log(f"Chart type: {'Git' if is_git_chart else 'Helm'}", verbose)
+    log(f"Chart: {chart_name}")
+    log(f"Repository: {repo_url}")
+    log(f"Version: {version}")
+    log(f"Chart type: {'Git' if is_git_chart else 'Helm'}")
 
     # Download chart if needed and get the chart path
     chart_path = download_helm_chart(app, chart_dir, workdir, verbose)
@@ -156,11 +156,11 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
     helm_args.extend(extra_args)
 
     # Run helm template
-    log("Running helm template...", verbose)
+    log("Running helm template...")
     run_helm_template(chart_path, helm_args, output_dir, secrets, verbose, print_output)
 
     manifest_file = ".manifest.secrets.yaml" if secrets else ".manifest.yaml"
-    log(f"Output written to {output_dir / manifest_file}", verbose)
+    log(f"Output written to {output_dir / manifest_file}")
 
 
 @click.group()
@@ -228,20 +228,20 @@ def render(ctx, workdir, application, chart_dir, verbose, secrets, ref_map):
     workdir = workdir.resolve() if workdir else Path.cwd()
     chart_dir = chart_dir.resolve() if chart_dir else workdir / ".chart"
 
-    log(f"Working directory: {workdir}", verbose)
+    log(f"Working directory: {workdir}")
 
     # Convert ref_map tuple to dictionary
     ref_map_override = {}
     if ref_map:
         for ref_name, local_path in ref_map:
             ref_map_override[ref_name] = local_path
-            log(f"Ref map parameter: {ref_name} -> {local_path}", verbose)
+            log(f"Ref map parameter: {ref_name} -> {local_path}")
 
     # Render manifests using common function
     application_yaml_path = workdir / application
     output_dir = workdir
 
-    log(f"Application YAML: {application_yaml_path}", verbose)
+    log(f"Application YAML: {application_yaml_path}")
 
     render_manifests(
         workdir=workdir,

@@ -7,10 +7,9 @@ from pathlib import Path
 import yaml
 
 
-def log(message: str, verbose: bool = False):
-    """Print message only if verbose mode is enabled."""
-    if verbose:
-        print(message, file=sys.stderr)
+def log(message: str):
+    """Print message to stderr."""
+    print(message, file=sys.stderr)
 
 
 class CommandError(Exception):
@@ -51,7 +50,9 @@ def run_command(
     Raises:
         CommandError: If check=True and command returns non-zero exit code
     """
-    log(f"Running: {' '.join(cmd)}", verbose)
+    # Show command and output only in verbose mode
+    if verbose:
+        log(f"Running: {' '.join(cmd)}")
 
     # Merge environment variables
     run_env = os.environ.copy()
@@ -69,9 +70,9 @@ def run_command(
     # Show output in verbose mode
     if verbose:
         if result.stdout:
-            log(f"stdout:\n{result.stdout}", verbose)
+            log(f"stdout:\n{result.stdout}")
         if result.stderr:
-            log(f"stderr:\n{result.stderr}", verbose)
+            log(f"stderr:\n{result.stderr}")
 
     if check and result.returncode != 0:
         raise CommandError(cmd, result.returncode, result.stdout, result.stderr)
@@ -115,15 +116,14 @@ def get_git_cache_dir(repo_url: str, workdir: Path) -> Path:
     return cache_root / repo_name
 
 
-def sort_yaml_file(file_path: Path, verbose: bool = False):
+def sort_yaml_file(file_path: Path):
     """
     Sort YAML file keys alphabetically.
 
     Args:
         file_path: Path to YAML file to sort
-        verbose: Enable verbose logging
     """
-    log(f"Sorting {file_path}...", verbose)
+    log(f"Sorting {file_path}...")
 
     # Load all YAML documents
     with open(file_path) as f:

@@ -29,7 +29,7 @@ def build_ref_mapping(ref_sources: dict, workdir: Path, ref_map_override: dict =
         # Parse and apply override mappings
         for ref_name, local_path in ref_map_override.items():
             ref_mapping[ref_name] = Path(local_path)
-            log(f"Ref mapping override: {ref_name} -> {local_path}", verbose)
+            log(f"Ref mapping override: {ref_name} -> {local_path}")
     else:
         # For the first ref source, use git root
         first_ref_name = next(iter(ref_sources.keys()))
@@ -41,7 +41,7 @@ def build_ref_mapping(ref_sources: dict, workdir: Path, ref_map_override: dict =
 
         git_root = resolve_git_root(workdir, verbose)
         ref_mapping[first_ref_name] = git_root
-        log(f"Ref mapping: {first_ref_name} -> {git_root}", verbose)
+        log(f"Ref mapping: {first_ref_name} -> {git_root}")
 
     return ref_mapping
 
@@ -69,7 +69,7 @@ def apply_ref_mapping_to_value_files(value_files: list[str], ref_mapping: dict, 
                 ref_name, relative_path = parts
                 if ref_name in ref_mapping:
                     resolved_path = ref_mapping[ref_name] / relative_path
-                    log(f"Mapped valueFile: {vf} -> {resolved_path}", verbose)
+                    log(f"Mapped valueFile: {vf} -> {resolved_path}")
                     resolved_files.append(resolved_path)
                 else:
                     raise RuntimeError(f"Error: Ref '{ref_name}' in valueFile '{vf}' not found in mapping")

@@ -85,8 +85,7 @@ def should_download_helm_chart(
             f"Chart metadata changed: "
             f"repoURL {stored_metadata.get('repoURL')} -> {repo_url}, "
             f"chartName {stored_metadata.get('chartName')} -> {chart_name}, "
-            f"targetRevision {stored_metadata.get('targetRevision')} -> {version}",
-            verbose
+            f"targetRevision {stored_metadata.get('targetRevision')} -> {version}"
         )
         return True
 
@@ -95,7 +94,7 @@ def should_download_helm_chart(
     chart_yaml = chart_path / "Chart.yaml"
 
     if not chart_path.exists() or not chart_yaml.exists():
-        log(f"Chart directory or Chart.yaml missing at {chart_yaml}, re-downloading", verbose)
+        log(f"Chart directory or Chart.yaml missing at {chart_yaml}, re-downloading")
         return True
 
     return False
@@ -116,7 +115,7 @@ def _symlink_git_helm_chart(repo_path: Path, chart_path: str, chart_dir: Path, v
     """Create a symlink from the chart directory to the Git repository chart."""
     # Remove entire .chart directory to ensure clean state
     if chart_dir.exists():
-        log(f"Removing existing .chart directory at {chart_dir}", verbose)
+        log(f"Removing existing .chart directory at {chart_dir}")
         shutil.rmtree(chart_dir)
 
     # Create fresh .chart directory
@@ -134,7 +133,7 @@ def _symlink_git_helm_chart(repo_path: Path, chart_path: str, chart_dir: Path, v
     # Destination symlink path in the .chart directory
     dest_chart_path = chart_dir / chart_dir_name
 
-    log(f"Creating symlink from {dest_chart_path} to {source_chart_path}", verbose)
+    log(f"Creating symlink from {dest_chart_path} to {source_chart_path}")
     dest_chart_path.symlink_to(source_chart_path)
 
 
@@ -142,7 +141,7 @@ def _download_helm_chart_impl(repo_url: str, chart_name: str, version: str, char
     """Raw download implementation using helm pull."""
     # Remove entire .chart directory to ensure clean state
     if chart_dir.exists():
-        log(f"Removing existing .chart directory at {chart_dir}", verbose)
+        log(f"Removing existing .chart directory at {chart_dir}")
         shutil.rmtree(chart_dir)
 
     # Create fresh .chart directory
@@ -190,12 +189,12 @@ def download_helm_chart(app: ArgocdApplication, chart_dir: Path, workdir: Path, 
     chart_path = chart_dir / actual_chart_dir_name
 
     if not should_download_helm_chart(chart_dir, chart_name, version, repo_url, is_git, verbose):
-        log(f"Chart {chart_name}:{version} already exists in {chart_dir}", verbose)
+        log(f"Chart {chart_name}:{version} already exists in {chart_dir}")
         return chart_path
 
     if is_git:
         # Handle Git-based chart
-        log(f"Downloading chart {chart_name} from Git revision {version}...", verbose)
+        log(f"Downloading chart {chart_name} from Git revision {version}...")
         repo_path = clone_or_update_git_repo(repo_url, workdir, verbose)
         checkout_git_revision(repo_path, version, verbose)
         _symlink_git_helm_chart(repo_path, chart_name, chart_dir, verbose)
@@ -215,7 +214,7 @@ def download_helm_chart(app: ArgocdApplication, chart_dir: Path, workdir: Path, 
         else:
             chart_ref = get_helm_repo_name_from_url(repo_url)
 
-        log(f"Downloading chart {chart_name}:{version}...", verbose)
+        log(f"Downloading chart {chart_name}:{version}...")
         _download_helm_chart_impl(chart_ref, chart_name, version, chart_dir, is_oci, verbose)
 
         # Record metadata for future cache validation

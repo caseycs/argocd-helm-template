@@ -27,12 +27,12 @@ def resolve_git_root(workdir: Path, verbose: bool = False) -> Path:
 
     git_dir = result.stdout.strip()
     if git_dir == ".git":
-        log(f"Git root: {workdir}", verbose)
+        log(f"Git root: {workdir}")
         return workdir
     else:
         # git_dir is a relative or absolute path to .git
         git_root = (workdir / git_dir).resolve().parent if not Path(git_dir).is_absolute() else Path(git_dir).parent
-        log(f"Git root: {git_root}", verbose)
+        log(f"Git root: {git_root}")
         return git_root
 
 
@@ -101,12 +101,12 @@ def clone_or_update_git_repo(repo_url: str, workdir: Path, verbose: bool = False
 
     if not cache_dir.exists():
         # Clone new repo
-        log(f"Cloning repository from {repo_url} to {cache_dir}...", verbose)
+        log(f"Cloning repository from {repo_url} to {cache_dir}...")
         cache_dir.parent.mkdir(parents=True, exist_ok=True)
         cmd = ["git", "--no-pager", "clone", repo_url, str(cache_dir)]
         run_command(cmd, verbose=verbose, env=GIT_NON_INTERACTIVE_ENV)
     else:
-        log(f"Using cached repository at {cache_dir}", verbose)
+        log(f"Using cached repository at {cache_dir}")
 
     return cache_dir
 
@@ -117,14 +117,14 @@ def checkout_git_revision(repo_path: Path, revision: str, verbose: bool = False)
 
     If the revision is not available locally, fetches from origin and retries.
     """
-    log(f"Checking out {revision} in {repo_path}...", verbose)
+    log(f"Checking out {revision} in {repo_path}...")
     cmd = ["git", "--no-pager", "-C", str(repo_path), "checkout", revision]
 
     try:
         run_command(cmd, verbose=verbose, env=GIT_NON_INTERACTIVE_ENV)
     except CommandError:
         # Revision not found locally, try fetching and retrying
-        log(f"Revision {revision} not found locally, fetching from origin...", verbose)
+        log(f"Revision {revision} not found locally, fetching from origin...")
         fetch_cmd = ["git", "--no-pager", "-C", str(repo_path), "fetch", "origin"]
 
         try:
@@ -133,7 +133,7 @@ def checkout_git_revision(repo_path: Path, revision: str, verbose: bool = False)
             raise RuntimeError(f"Failed to fetch from origin: {e.stderr}")
 
         # Retry checkout after fetch
-        log(f"Retrying checkout of {revision} after fetch...", verbose)
+        log(f"Retrying checkout of {revision} after fetch...")
         try:
             run_command(cmd, verbose=verbose, env=GIT_NON_INTERACTIVE_ENV)
         except CommandError as e:

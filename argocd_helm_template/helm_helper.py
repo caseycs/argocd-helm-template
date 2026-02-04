@@ -31,14 +31,14 @@ def is_helm_repo_added(repo_name: str, verbose: bool = False) -> bool:
 def ensure_helm_repo_added(repo_name: str, repo_url: str, verbose: bool = False):
     """Ensure Helm repository is added and updated."""
     if not is_helm_repo_added(repo_name, verbose):
-        log(f"Adding Helm repository {repo_name}...", verbose)
+        log(f"Adding Helm repository {repo_name}...")
         cmd = ["helm", "repo", "add", repo_name, repo_url]
         run_command(cmd, verbose=verbose)
     else:
-        log(f"Helm repository {repo_name} already added", verbose)
+        log(f"Helm repository {repo_name} already added")
 
     # Update repo to get latest chart info
-    log(f"Updating Helm repository {repo_name}...", verbose)
+    log(f"Updating Helm repository {repo_name}...")
     cmd = ["helm", "repo", "update", repo_name]
     run_command(cmd, verbose=verbose)
 
@@ -87,7 +87,7 @@ def process_secrets(yaml_output: str, secrets: bool = False, verbose: bool = Fal
 
             # Process Secrets
             if isinstance(doc, dict) and doc.get('kind') == 'Secret':
-                log(f"Processing Secret: {doc.get('metadata', {}).get('name', 'unknown')}", verbose)
+                log(f"Processing Secret: {doc.get('metadata', {}).get('name', 'unknown')}")
 
                 # Decode data section
                 if 'data' in doc and isinstance(doc['data'], dict):
@@ -97,15 +97,15 @@ def process_secrets(yaml_output: str, secrets: bool = False, verbose: bool = Fal
                                 decoded = base64.b64decode(value).decode('utf-8')
                                 # Wrap in LiteralString to force literal block scalar style
                                 doc['data'][key] = LiteralString(decoded)
-                                log(f"  Decoded key: {key}", verbose)
+                                log(f"  Decoded key: {key}")
                             except Exception as e:
-                                log(f"  Failed to decode key {key}: {e}", verbose)
+                                log(f"  Failed to decode key {key}: {e}")
                                 # Keep original value if decoding fails
                                 pass
 
             documents.append(doc)
     except yaml.YAMLError as e:
-        log(f"Warning: Failed to parse YAML: {e}", verbose)
+        log(f"Warning: Failed to parse YAML: {e}")
         return yaml_output  # Return original if parsing fails
 
     # Create custom dumper with our representers
@@ -155,7 +155,9 @@ def run_helm_template(chart_path: Path, helm_args: list[str], output_dir: Path =
     # Add chart path
     cmd.append(str(chart_path))
 
-    log(f"Running: {' '.join(cmd)}", verbose)
+    # Show command only in verbose mode
+    if verbose:
+        log(f"Running: {' '.join(cmd)}")
 
     # Run helm template and capture output
     process = subprocess.Popen(
@@ -176,11 +178,11 @@ def run_helm_template(chart_path: Path, helm_args: list[str], output_dir: Path =
             error_parts.append(f"stderr:\n{stderr_output}")
         raise RuntimeError("\n".join(error_parts))
     elif verbose and stderr_output:
-        log(stderr_output, verbose)
+        log(f"stderr:\n{stderr_output}")
 
     # Post-process to decode Secret values if requested
     if secrets:
-        log("Post-processing Secrets to decode base64 values...", verbose)
+        log("Post-processing Secrets to decode base64 values...")
     processed_output = process_secrets(stdout_output, secrets, verbose)
 
     # Determine output filename based on secrets flag
