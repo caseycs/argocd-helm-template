@@ -9,7 +9,7 @@ import click
 
 from .argocd_application import ArgocdApplication
 from .utils import log
-from .chart_manager import download_helm_chart
+from .chart_manager import HelmChartManager
 from .helm_helper import run_helm_template
 from .ref_mapper import build_ref_mapping, apply_ref_mapping_to_value_files
 
@@ -147,7 +147,8 @@ def render_manifests(workdir: Path, chart_dir: Path, application_yaml_path: Path
     log(f"Chart type: {'Git' if is_git_chart else 'Helm'}")
 
     # Download chart if needed and get the chart path
-    chart_path = download_helm_chart(app, chart_dir, workdir, verbose)
+    chart_manager = HelmChartManager(chart_dir, workdir, verbose)
+    chart_path = chart_manager.download(app)
 
     # Compute helm arguments (includes release name, values files, skipCrds)
     helm_args = compute_helm_args(app, workdir, ref_map_override, verbose)
