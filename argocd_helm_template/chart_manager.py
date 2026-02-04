@@ -4,9 +4,35 @@ import shutil
 from pathlib import Path
 import yaml
 from .argocd_application import ArgocdApplication
-from .utils import log, get_helm_repo_name_from_url, run_command
+from .utils import log, get_helm_repo_name_from_url, get_git_cache_dir, run_command, GIT_NON_INTERACTIVE_ENV
 from .helm_helper import ensure_helm_repo_added
-from .git_helper import clone_or_update_git_repo, checkout_git_revision
+from .git_helper import GitRepo
+
+
+def _clone_or_get_cached(repo_url: str, workdir: Path, verbose: bool = False) -> GitRepo:
+    """
+    Clone a Git repository to cache directory if it doesn't exist, or return cached.
+
+    Args:
+        repo_url: URL of the git repository to clone
+        workdir: Working directory (used to determine cache location)
+        verbose: Enable verbose logging
+
+    Returns:
+        GitRepo instance pointing to the cached repository
+    """
+    cache_dir = get_git_cache_dir(repo_url, workdir)
+
+    if not cache_dir.exists():
+        # Clone new repo
+        log(f"Cloning repository from {repo_url} to {cache_dir}...")
+        cache_dir.parent.mkdir(parents=True, exist_ok=True)
+        cmd = ["git", "--no-pager", "clone", repo_url, str(cache_dir)]
+        run_command(cmd, verbose=verbose, env=GIT_NON_INTERACTIVE_ENV)
+    else:
+        log(f"Using cached repository at {cache_dir}")
+
+    return GitRepo(cache_dir, verbose=verbose)
 
 
 def _get_or_create_metadata_file(chart_dir: Path) -> Path:
@@ -195,9 +221,9 @@ def download_helm_chart(app: ArgocdApplication, chart_dir: Path, workdir: Path, 
     if is_git:
         # Handle Git-based chart
         log(f"Downloading chart {chart_name} from Git revision {version}...")
-        repo_path = clone_or_update_git_repo(repo_url, workdir, verbose)
-        checkout_git_revision(repo_path, version, verbose)
-        _symlink_git_helm_chart(repo_path, chart_name, chart_dir, verbose)
+        repo = _clone_or_get_cached(repo_url, workdir, verbose)
+        repo.checkout(version)
+        _symlink_git_helm_chart(repo.path, chart_name, chart_dir, verbose)
         # Git charts always re-copy, so no metadata recording needed
     else:
         # Handle Helm registry chart (traditional or OCI)

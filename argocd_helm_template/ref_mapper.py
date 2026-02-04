@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from .utils import log
-from .git_helper import resolve_git_root
+from .git_helper import GitRepo
 
 
 def build_ref_mapping(ref_sources: dict, workdir: Path, ref_map_override: dict = None, verbose: bool = False) -> dict:
@@ -39,7 +39,8 @@ def build_ref_mapping(ref_sources: dict, workdir: Path, ref_map_override: dict =
                 "Please specify --ref-map to map each ref to a local path (e.g., --ref-map values=/path/to/values --ref-map other=/path/to/other)"
             )
 
-        git_root = resolve_git_root(workdir, verbose)
+        repo = GitRepo(workdir, verbose=verbose)
+        git_root = repo.resolve_root()
         ref_mapping[first_ref_name] = git_root
         log(f"Ref mapping: {first_ref_name} -> {git_root}")
 
