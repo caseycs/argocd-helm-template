@@ -1,0 +1,8 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Run tests
+    cmds:
+      - uv sync --extra dev
+      - uv run pytest -v
