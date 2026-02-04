@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 from .argocd_application import ArgocdApplication
 from .utils import log, get_helm_repo_name_from_url, run_command
-from .repo_manager import ensure_helm_repo_added
+from .helm_helper import ensure_helm_repo_added
 from .git_helper import clone_or_update_git_repo, checkout_git_revision
 
 

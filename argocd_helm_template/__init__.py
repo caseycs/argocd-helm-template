@@ -10,7 +10,7 @@ import click
 from .argocd_application import ArgocdApplication
 from .utils import log
 from .chart_manager import download_helm_chart
-from .helm_executor import run_helm_template
+from .helm_helper import run_helm_template
 from .ref_mapper import build_ref_mapping, apply_ref_mapping_to_value_files
 
 __version__ = "0.1.0"
