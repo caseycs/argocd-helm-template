@@ -19,7 +19,22 @@ argocd-helm-template = "argocd_helm_template:cli"
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
+    "pytest-cov>=4.0",
 ]
 
 [tool.setuptools]
 packages = ["argocd_helm_template"]
+
+[tool.pytest.ini_options]
+addopts = "--cov=argocd_helm_template --cov-report=term-missing --cov-report=html"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["argocd_helm_template"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "if __name__ == .__main__.:",
+    "pragma: no cover",
+]
