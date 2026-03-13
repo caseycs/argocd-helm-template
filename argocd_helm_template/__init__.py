@@ -68,8 +68,13 @@ def cli():
     type=KeyValueParamType(),
     help='Map ref sources to local paths (use multiple times: --ref-map ref1=path1 --ref-map ref2=path2). If not provided, uses workdir git root for the first one.'
 )
+@click.option(
+    '--skip-output',
+    is_flag=True,
+    help='Write .manifest.yaml but do not print to stdout'
+)
 @click.pass_context
-def render(ctx, workdir, application, chart_dir, verbose, secrets, ref_map):
+def render(ctx, workdir, application, chart_dir, verbose, secrets, ref_map, skip_output):
     """Render Kubernetes manifests from application.yaml.
 
     Any additional arguments are passed through to 'helm template'.
@@ -113,7 +118,7 @@ def render(ctx, workdir, application, chart_dir, verbose, secrets, ref_map):
             ref_map_override=ref_map_override,
             secrets=secrets,
             verbose=verbose,
-            print_output=True
+            print_output=not skip_output
         )
     except RuntimeError as e:
         raise click.ClickException(str(e))

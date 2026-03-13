@@ -44,3 +44,23 @@ def test_without_values():
     chart_yaml = chart_dir / "argo-events" / "Chart.yaml"
     assert chart_yaml.exists(), f"Chart.yaml not found at {chart_yaml}"
 
+
+def test_skip_output():
+    """End-to-end test: Verify --skip-output writes .manifest.yaml but prints nothing to stdout."""
+    test_dir = Path(__file__).parent / "without-values"
+    cleanup_test_dir(test_dir)
+
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["render", "--workdir", str(test_dir), "--skip-output"])
+
+    assert result.exit_code == 0, f"CLI failed with exit code {result.exit_code}\nOutput:\n{result.output}"
+
+    # stdout should be empty (no YAML printed)
+    assert "---" not in result.output, "Output should be empty when --skip-output is used"
+
+    # .manifest.yaml should still be written
+    manifest = test_dir / ".manifest.yaml"
+    assert manifest.exists(), ".manifest.yaml should be written even with --skip-output"
+    assert "---" in manifest.read_text(), ".manifest.yaml should contain YAML"
+
