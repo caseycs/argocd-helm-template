@@ -151,7 +151,14 @@ def test_compute_helm_args_with_single_values_file():
     repoRoot = Path(__file__).parent.parent
     workdir = Path.cwd()
 
-    app_yaml = """
+    # Create the values file so it's found during resolution
+    values_dir = repoRoot / "dir"
+    values_dir.mkdir(exist_ok=True)
+    values_file = values_dir / "values.yaml"
+    values_file.touch()
+
+    try:
+        app_yaml = """
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -168,9 +175,12 @@ spec:
       ref: values
 """
 
-    args = compute_helm_args_with_validation(app_yaml, workdir)
-    assert args == ['--release-name', 'karpenter-app', '-f', f"{repoRoot}/dir/values.yaml"], \
-        "First reference ($values) should be be mapped to workdir repo root"
+        args = compute_helm_args_with_validation(app_yaml, workdir)
+        assert args == ['--release-name', 'karpenter-app', '-f', f"{repoRoot}/dir/values.yaml"], \
+            "First reference ($values) should be be mapped to workdir repo root"
+    finally:
+        values_file.unlink(missing_ok=True)
+        values_dir.rmdir()
 
 
 def test_compute_helm_args_with_multiple_values_files():
@@ -179,7 +189,14 @@ def test_compute_helm_args_with_multiple_values_files():
     repoRoot = Path(__file__).parent.parent
     workdir = Path.cwd()
 
-    app_yaml = """
+    # Create the values files so they're found during resolution
+    values1 = repoRoot / "values1.yaml"
+    values2 = repoRoot / "values2.yaml"
+    values1.touch()
+    values2.touch()
+
+    try:
+        app_yaml = """
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -197,18 +214,79 @@ spec:
       ref: values
 """
 
-    args = compute_helm_args_with_validation(app_yaml, workdir)
+        args = compute_helm_args_with_validation(app_yaml, workdir)
 
-    # Should contain release name, skipCrds, and two values files
-    assert args == ['--release-name', 'karpenter-app', '-f', f"{repoRoot}/values1.yaml", "-f", f"{repoRoot}/values2.yaml"], \
-        "Both values files reference ($values) should be be mapped to workdir repo root"
+        # Should contain release name, skipCrds, and two values files
+        assert args == ['--release-name', 'karpenter-app', '-f', f"{repoRoot}/values1.yaml", "-f", f"{repoRoot}/values2.yaml"], \
+            "Both values files reference ($values) should be be mapped to workdir repo root"
+    finally:
+        values1.unlink(missing_ok=True)
+        values2.unlink(missing_ok=True)
+
+
+def test_compute_helm_args_missing_values_file_raises_error():
+    """Test that missing values files raise an error."""
+    workdir = Path.cwd()
+
+    app_yaml = """
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crds-chart
+spec:
+  sources:
+    - repoURL: public.ecr.aws/karpenter
+      targetRevision: 1.5.2
+      chart: karpenter-crd
+      helm:
+        valueFiles:
+          - $values/nonexistent/values.yaml
+    - repoURL: https://github.com/org/values-repo
+      ref: values
+"""
+
+    with pytest.raises(ApplicationValidationError) as exc_info:
+        compute_helm_args_with_validation(app_yaml, workdir)
+
+    assert "does not exist" in str(exc_info.value), \
+        "Should fail when referenced values.yaml file does not exist"
+
+
+def test_compute_helm_args_no_values_files_for_crds_chart():
+    """Test CRD chart with no valueFiles works correctly."""
+    workdir = Path.cwd()
+
+    app_yaml = """
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter-crd
+spec:
+  sources:
+    - repoURL: public.ecr.aws/karpenter
+      targetRevision: 1.5.2
+      chart: karpenter-crd
+      helm:
+        skipCrds: false
+"""
+
+    args = compute_helm_args_with_validation(app_yaml, workdir)
+    assert args == ['--release-name', 'karpenter-crd'], \
+        "CRD chart with no valueFiles should only have release name"
 
 
 def test_compute_helm_args_with_ref_mapping_override():
     """Test compute_helm_args with ref mapping override."""
     workdir = Path.cwd()
 
-    app_yaml = """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create the values files in the temp dir
+        values_dir = Path(tmpdir) / "dir"
+        values_dir.mkdir()
+        (values_dir / "values1.yaml").touch()
+        (values_dir / "values2.yaml").touch()
+
+        app_yaml = """
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -226,11 +304,11 @@ spec:
       ref: values
 """
 
-    ref_map_override = {"values": "/tmp/"}
-    args = compute_helm_args_with_validation(app_yaml, workdir, ref_map_override)
+        ref_map_override = {"values": tmpdir}
+        args = compute_helm_args_with_validation(app_yaml, workdir, ref_map_override)
 
-    assert args == ['--release-name', 'karpenter-app', "-f", "/tmp/dir/values1.yaml", "-f", "/tmp/dir/values2.yaml"], \
-        "Custom mapping override ($values->/tmp/) should work"
+        assert args == ['--release-name', 'karpenter-app', "-f", f"{tmpdir}/dir/values1.yaml", "-f", f"{tmpdir}/dir/values2.yaml"], \
+            "Custom mapping override ($values->tmpdir) should work"
 
 
 def test_compute_helm_args_missing_ref_outside_of_git_repo_raises_error():

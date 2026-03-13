@@ -70,6 +70,8 @@ def apply_ref_mapping_to_value_files(value_files: list[str], ref_mapping: dict, 
                 ref_name, relative_path = parts
                 if ref_name in ref_mapping:
                     resolved_path = ref_mapping[ref_name] / relative_path
+                    if not resolved_path.exists():
+                        raise RuntimeError(f"Error: valueFile '{vf}' resolved to '{resolved_path}' but file does not exist")
                     log(f"Mapped valueFile: {vf} -> {resolved_path}")
                     resolved_files.append(resolved_path)
                 else:
