@@ -46,19 +46,19 @@ class GitRepo:
             return self._root
 
         try:
-            result = self._run_git(["rev-parse", "--git-dir"])
+            # --show-toplevel (not --git-dir) is required to work correctly
+            # inside a git worktree: a worktree's --git-dir points into
+            # <main-repo>/.git/worktrees/<name>, so deriving the root from its
+            # parent lands in the main repo's .git directory instead of the
+            # worktree's actual working tree.
+            result = self._run_git(["rev-parse", "--show-toplevel"])
         except CommandError:
             raise RuntimeError(
                 f"Error: Directory {self.path} is not in a git repository. "
                 "Cannot determine git root for ref sources."
             )
 
-        git_dir = result.stdout.strip()
-        if git_dir == ".git":
-            self._root = self.path
-        else:
-            # git_dir is a relative or absolute path to .git
-            self._root = (self.path / git_dir).resolve().parent if not Path(git_dir).is_absolute() else Path(git_dir).parent
+        self._root = Path(result.stdout.strip())
 
         log(f"Git root: {self._root}")
         return self._root
